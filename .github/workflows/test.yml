@@ -1,0 +1,29 @@
+name: "units-test"
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "releases/*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # unit tests
+  units:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - run: npm ci
+      - run: npm run all
+
+  # test action works running from the graph
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./
+        id: z3
+      - run: echo ${{ steps.z3.outputs.z3-root }}

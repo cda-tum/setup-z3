@@ -1,0 +1,25 @@
+name: "Setup Z3"
+description: "Set up a specific version of the Z3 theorem prover"
+author: "cda-tum"
+inputs:
+  version:
+    description: "The version of Z3 to install. Defaults to latest."
+    required: false
+    default: "latest"
+  platform:
+    description: "The platform to install Z3 for (either linux, macOS, or windows). Defaults to host."
+    required: false
+    default: "host"
+  architecture:
+    description: "The architecture to install Z3 for (either x64 or arm64). Defaults to host."
+    required: false
+    default: "host"
+outputs:
+  z3-root:
+    description: "The root directory of the Z3 installation"
+runs:
+  using: "node16"
+  main: "dist/index.js"
+branding:
+  icon: "package"
+  color: "blue"
