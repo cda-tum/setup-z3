@@ -45,7 +45,7 @@ If you want to explicitly specify the platform and architecture for which Z3 sho
   id: z3
   uses: cda-tum/setup-z3@v1
   with:
-    platform: macos
+    platform: macOS
     architecture: arm64
 ```
 
@@ -53,6 +53,6 @@ If you want to explicitly specify the platform and architecture for which Z3 sho
 > Valid and tested combinations for the `platform` and `architecture` inputs are:
 >
 > - `platform: linux`, `architecture: x64`
-> - `platform: macos`, `architecture: x64`
-> - `platform: macos`, `architecture: arm64`
+> - `platform: macOS`, `architecture: x64`
+> - `platform: macOS`, `architecture: arm64`
 > - `platform: windows`, `architecture: x64`
