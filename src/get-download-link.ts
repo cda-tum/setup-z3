@@ -1,5 +1,6 @@
 import process from "node:process"
-import fetch from "node-fetch"
+// @ts-ignore
+import fetch from "node-fetch-retry"
 
 /**
  * Determine the URL of the Z3 release asset for the given platform and architecture.
@@ -78,9 +79,9 @@ async function getRelease(version: string): Promise<{assets: string[]; version: 
   } else {
     url = `https://api.github.com/repos/Z3Prover/z3/releases/tags/z3-${version}`
   }
-  const response = await fetch(url)
+  const response = await fetch(url, { method: 'GET', retry: 5, pause: 5000 })
   if (response.status !== 200) {
-    throw new Error(`Invalid Z3 version: ${version}`)
+    throw new Error(`Error fetching release for version ${version}. Received status code ${response.status}.`)
   }
 
   const json = (await response.json()) as {assets: {name: string}[]; tag_name: string}
