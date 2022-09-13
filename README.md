@@ -10,9 +10,15 @@ To download the latest version of Z3 for the host platform and add it to the `PA
 - name: Setup Z3
   id: z3
   uses: cda-tum/setup-z3@v1
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 This action creates a `z3-root` output variable that contains the path to the root directory of the Z3 installation and exports the `Z3_ROOT` environment variable for subsequent steps in a job. The output variable can be accessed as `${{ steps.z3.outputs.z3-root }}`.
+
+> **Warning**
+> The `GITHUB_TOKEN` environment variable is required to download the Z3 binaries from GitHub releases.
+> The token is automatically provided by GitHub Actions and does not need to be configured manually.
 
 ### Specifying a version
 
@@ -24,6 +30,8 @@ In many cases, it is convenient to use a specific version of Z3. This can be don
   uses: cda-tum/setup-z3@v1
   with:
     version: 4.11.2
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 > **Note**
@@ -40,6 +48,8 @@ If you want to explicitly specify the platform and architecture for which Z3 sho
   with:
     platform: macOS
     architecture: arm64
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 > **Note**
