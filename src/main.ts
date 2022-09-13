@@ -18,8 +18,8 @@ async function run(): Promise<void> {
 
   core.debug("==> Determining Z3 asset URL")
   const url = await getDownloadLink(version, platform, architecture)
-  core.debug(`==> Downloading Z3 asset: ${url.path}/${url.asset}`)
-  const file = await tc.downloadTool(`${url.path}/${url.asset}`)
+  core.debug(`==> Downloading Z3 asset: ${url.path}`)
+  const file = await tc.downloadTool(`${url.path}`)
   core.debug("==> Extracting Z3 asset")
   const dir = await tc.extractZip(path.resolve(file))
   core.debug("==> Adding Z3 to tool cache")
