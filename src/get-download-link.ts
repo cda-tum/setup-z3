@@ -1,5 +1,5 @@
 import process from "node:process"
-import {Octokit} from "@octokit/core"
+import {Octokit} from "@octokit/action"
 // eslint-disable-next-line import/no-unresolved
 import {components} from "@octokit/openapi-types"
 
