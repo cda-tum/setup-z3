@@ -1,11 +1,11 @@
 /*eslint import/no-unresolved: [2, { ignore: ['\\get-download-link.js$'] }]*/
 import * as core from "@actions/core"
+import * as exec from "@actions/exec"
 import * as io from "@actions/io"
 import * as tc from "@actions/tool-cache"
 import getDownloadLink from "./get-download-link.js"
 import path from "node:path"
 import process from "node:process"
-import * as cp from "node:child_process"
 
 /**
  * Setup Z3
@@ -31,11 +31,13 @@ async function run(): Promise<void> {
   core.debug("==> Adding Z3 to PATH")
   core.addPath(`${z3Root}/bin`)
 
-  if (process.platform === "darwin") {
+  if (platform === "macOS" || (platform === "host" && process.platform === "darwin")) {
     core.debug("==> Patching Z3 dynamic library")
     const dylib = path.resolve(`${z3Root}/bin/libz3.dylib`)
     core.debug(`==> Changing dylib ID from libz3.dylib to ${dylib}`)
-    cp.exec(`install_name_tool -id ${dylib} -change $(basename ${dylib}) ${dylib} ${dylib}`)
+    const cmd = "install_name_tool"
+    const args = ["-id", dylib, "-change", `$(basename ${dylib})`, dylib, dylib]
+    await exec.exec(cmd, args)
   }
 
   core.debug("==> Deleting temporary files")

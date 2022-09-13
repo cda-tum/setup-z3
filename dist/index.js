@@ -537,8 +537,8 @@ class OidcClient {
             const res = yield httpclient
                 .getJson(id_token_url)
                 .catch(error => {
-                throw new Error(`Failed to get ID Token. \n 
-        Error Code : ${error.statusCode}\n 
+                throw new Error(`Failed to get ID Token. \n
+        Error Code : ${error.statusCode}\n
         Error Message: ${error.result.message}`);
             });
             const id_token = (_a = res.result) === null || _a === void 0 ? void 0 : _a.value;
@@ -8524,7 +8524,7 @@ exports["default"] = _default;
         }
         /**
          * Returns a promise that will be fulfilled when the stream becomes closed, or rejected if the stream ever errors or
-         * the writer’s lock is released before the stream finishes closing.
+         * the writer's lock is released before the stream finishes closing.
          */
         get closed() {
             if (!IsWritableStreamDefaultWriter(this)) {
@@ -8533,12 +8533,12 @@ exports["default"] = _default;
             return this._closedPromise;
         }
         /**
-         * Returns the desired size to fill the stream’s internal queue. It can be negative, if the queue is over-full.
+         * Returns the desired size to fill the stream's internal queue. It can be negative, if the queue is over-full.
          * A producer can use this information to determine the right amount of data to write.
          *
          * It will be `null` if the stream cannot be successfully written to (due to either being errored, or having an abort
          * queued up). It will return zero if the stream is closed. And the getter will throw an exception if invoked when
-         * the writer’s lock is released.
+         * the writer's lock is released.
          */
         get desiredSize() {
             if (!IsWritableStreamDefaultWriter(this)) {
@@ -8550,11 +8550,11 @@ exports["default"] = _default;
             return WritableStreamDefaultWriterGetDesiredSize(this);
         }
         /**
-         * Returns a promise that will be fulfilled when the desired size to fill the stream’s internal queue transitions
+         * Returns a promise that will be fulfilled when the desired size to fill the stream's internal queue transitions
          * from non-positive to positive, signaling that it is no longer applying backpressure. Once the desired size dips
          * back to zero or below, the getter will return a new promise that stays pending until the next transition.
          *
-         * If the stream becomes errored or aborted, or the writer’s lock is released, the returned promise will become
+         * If the stream becomes errored or aborted, or the writer's lock is released, the returned promise will become
          * rejected.
          */
         get ready() {
@@ -8592,13 +8592,13 @@ exports["default"] = _default;
             return WritableStreamDefaultWriterClose(this);
         }
         /**
-         * Releases the writer’s lock on the corresponding stream. After the lock is released, the writer is no longer active.
+         * Releases the writer's lock on the corresponding stream. After the lock is released, the writer is no longer active.
          * If the associated stream is errored when the lock is released, the writer will appear errored in the same way from
          * now on; otherwise, the writer will appear closed.
          *
          * Note that the lock can still be released even if some ongoing writes have not yet finished (i.e. even if the
          * promises returned from previous calls to {@link WritableStreamDefaultWriter.write | write()} have not yet settled).
-         * It’s not necessary to hold the lock on the writer for the duration of the write; the lock instead simply prevents
+         * It's not necessary to hold the lock on the writer for the duration of the write; the lock instead simply prevents
          * other producers from writing in an interleaved manner.
          */
         releaseLock() {
@@ -10530,7 +10530,7 @@ exports["default"] = _default;
             throw new TypeError('Illegal constructor');
         }
         /**
-         * Returns the desired size to fill the readable side’s internal queue. It can be negative, if the queue is over-full.
+         * Returns the desired size to fill the readable side's internal queue. It can be negative, if the queue is over-full.
          */
         get desiredSize() {
             if (!IsTransformStreamDefaultController(this)) {
@@ -10793,13 +10793,6 @@ module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("https");
 /***/ ((module) => {
 
 module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("net");
-
-/***/ }),
-
-/***/ 7718:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:child_process");
 
 /***/ }),
 
@@ -12316,7 +12309,7 @@ function determineRequestsReferrer(request, {referrerURLCallback, referrerOrigin
  */
 function parseReferrerPolicyFromHeader(headers) {
 	// 1. Let policy-tokens be the result of extracting header list values given `Referrer-Policy`
-	//    and response’s header list.
+	//    and response's header list.
 	const policyTokens = (headers.get('referrer-policy') || '').split(/[,\s]+/);
 
 	// 2. Let policy be the empty string.
@@ -13191,12 +13184,12 @@ function findAsset(assets, version, platform, architecture) {
 
 __nccwpck_require__.a(__webpack_module__, async (__webpack_handle_async_dependencies__) => {
 /* harmony import */ var _actions_core__WEBPACK_IMPORTED_MODULE_0__ = __nccwpck_require__(2186);
-/* harmony import */ var _actions_io__WEBPACK_IMPORTED_MODULE_1__ = __nccwpck_require__(7436);
-/* harmony import */ var _actions_tool_cache__WEBPACK_IMPORTED_MODULE_2__ = __nccwpck_require__(7784);
-/* harmony import */ var _get_download_link_js__WEBPACK_IMPORTED_MODULE_3__ = __nccwpck_require__(623);
-/* harmony import */ var node_path__WEBPACK_IMPORTED_MODULE_4__ = __nccwpck_require__(9411);
-/* harmony import */ var node_process__WEBPACK_IMPORTED_MODULE_5__ = __nccwpck_require__(7742);
-/* harmony import */ var node_child_process__WEBPACK_IMPORTED_MODULE_6__ = __nccwpck_require__(7718);
+/* harmony import */ var _actions_exec__WEBPACK_IMPORTED_MODULE_1__ = __nccwpck_require__(1514);
+/* harmony import */ var _actions_io__WEBPACK_IMPORTED_MODULE_2__ = __nccwpck_require__(7436);
+/* harmony import */ var _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__ = __nccwpck_require__(7784);
+/* harmony import */ var _get_download_link_js__WEBPACK_IMPORTED_MODULE_4__ = __nccwpck_require__(623);
+/* harmony import */ var node_path__WEBPACK_IMPORTED_MODULE_5__ = __nccwpck_require__(9411);
+/* harmony import */ var node_process__WEBPACK_IMPORTED_MODULE_6__ = __nccwpck_require__(7742);
 /*eslint import/no-unresolved: [2, { ignore: ['\\get-download-link.js$'] }]*/
 
 
@@ -13214,26 +13207,28 @@ async function run() {
     const platform = _actions_core__WEBPACK_IMPORTED_MODULE_0__.getInput("platform", { required: true });
     const architecture = _actions_core__WEBPACK_IMPORTED_MODULE_0__.getInput("architecture", { required: true });
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Determining Z3 asset URL");
-    const url = await (0,_get_download_link_js__WEBPACK_IMPORTED_MODULE_3__/* ["default"] */ .Z)(version, platform, architecture);
+    const url = await (0,_get_download_link_js__WEBPACK_IMPORTED_MODULE_4__/* ["default"] */ .Z)(version, platform, architecture);
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug(`==> Downloading Z3 asset: ${url.path}/${url.asset}`);
-    const file = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_2__.downloadTool(`${url.path}/${url.asset}`);
+    const file = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__.downloadTool(`${url.path}/${url.asset}`);
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Extracting Z3 asset");
-    const dir = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_2__.extractZip(node_path__WEBPACK_IMPORTED_MODULE_4__.resolve(file));
+    const dir = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__.extractZip(node_path__WEBPACK_IMPORTED_MODULE_5__.resolve(file));
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to tool cache");
-    const cachedPath = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_2__.cacheDir(dir, "z3", version);
+    const cachedPath = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__.cacheDir(dir, "z3", version);
     const z3Root = `${cachedPath}/${url.asset.replace(/\.zip$/, "")}`;
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.setOutput("z3-root", z3Root);
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to PATH");
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.addPath(`${z3Root}/bin`);
-    if (node_process__WEBPACK_IMPORTED_MODULE_5__.platform === "darwin") {
+    if (platform === "macOS" || (platform === "host" && node_process__WEBPACK_IMPORTED_MODULE_6__.platform === "darwin")) {
         _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Patching Z3 dynamic library");
-        const dylib = node_path__WEBPACK_IMPORTED_MODULE_4__.resolve(`${z3Root}/bin/libz3.dylib`);
+        const dylib = node_path__WEBPACK_IMPORTED_MODULE_5__.resolve(`${z3Root}/bin/libz3.dylib`);
         _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug(`==> Changing dylib ID from libz3.dylib to ${dylib}`);
-        node_child_process__WEBPACK_IMPORTED_MODULE_6__.exec(`install_name_tool -id ${dylib} -change $(basename ${dylib}) ${dylib} ${dylib}`);
+        const cmd = "install_name_tool";
+        const args = ["-id", dylib, "-change", `$(basename ${dylib})`, dylib, dylib];
+        await _actions_exec__WEBPACK_IMPORTED_MODULE_1__.exec(cmd, args);
     }
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Deleting temporary files");
-    await _actions_io__WEBPACK_IMPORTED_MODULE_1__.rmRF(file);
-    await _actions_io__WEBPACK_IMPORTED_MODULE_1__.rmRF(dir);
+    await _actions_io__WEBPACK_IMPORTED_MODULE_2__.rmRF(file);
+    await _actions_io__WEBPACK_IMPORTED_MODULE_2__.rmRF(dir);
 }
 try {
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Starting Z3 setup");
@@ -13761,7 +13756,7 @@ return new B(c,{type:"multipart/form-data; boundary="+b})}
 /************************************************************************/
 /******/ // The module cache
 /******/ var __webpack_module_cache__ = {};
-/******/ 
+/******/
 /******/ // The require function
 /******/ function __nccwpck_require__(moduleId) {
 /******/ 	// Check if module is in cache
@@ -13775,7 +13770,7 @@ return new B(c,{type:"multipart/form-data; boundary="+b})}
 /******/ 		// no module.loaded needed
 /******/ 		exports: {}
 /******/ 	};
-/******/ 
+/******/
 /******/ 	// Execute the module function
 /******/ 	var threw = true;
 /******/ 	try {
@@ -13784,14 +13779,14 @@ return new B(c,{type:"multipart/form-data; boundary="+b})}
 /******/ 	} finally {
 /******/ 		if(threw) delete __webpack_module_cache__[moduleId];
 /******/ 	}
-/******/ 
+/******/
 /******/ 	// Return the exports of the module
 /******/ 	return module.exports;
 /******/ }
-/******/ 
+/******/
 /******/ // expose the modules object (__webpack_modules__)
 /******/ __nccwpck_require__.m = __webpack_modules__;
-/******/ 
+/******/
 /************************************************************************/
 /******/ /* webpack/runtime/async module */
 /******/ (() => {
@@ -13866,7 +13861,7 @@ return new B(c,{type:"multipart/form-data; boundary="+b})}
 /******/ 		isEvaluating = false;
 /******/ 	};
 /******/ })();
-/******/ 
+/******/
 /******/ /* webpack/runtime/define property getters */
 /******/ (() => {
 /******/ 	// define getter functions for harmony exports
@@ -13878,7 +13873,7 @@ return new B(c,{type:"multipart/form-data; boundary="+b})}
 /******/ 		}
 /******/ 	};
 /******/ })();
-/******/ 
+/******/
 /******/ /* webpack/runtime/ensure chunk */
 /******/ (() => {
 /******/ 	__nccwpck_require__.f = {};
@@ -13891,7 +13886,7 @@ return new B(c,{type:"multipart/form-data; boundary="+b})}
 /******/ 		}, []));
 /******/ 	};
 /******/ })();
-/******/ 
+/******/
 /******/ /* webpack/runtime/get javascript chunk filename */
 /******/ (() => {
 /******/ 	// This function allow to reference async chunks
@@ -13900,12 +13895,12 @@ return new B(c,{type:"multipart/form-data; boundary="+b})}
 /******/ 		return "" + chunkId + ".index.js";
 /******/ 	};
 /******/ })();
-/******/ 
+/******/
 /******/ /* webpack/runtime/hasOwnProperty shorthand */
 /******/ (() => {
 /******/ 	__nccwpck_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
 /******/ })();
-/******/ 
+/******/
 /******/ /* webpack/runtime/make namespace object */
 /******/ (() => {
 /******/ 	// define __esModule on exports
@@ -13916,22 +13911,22 @@ return new B(c,{type:"multipart/form-data; boundary="+b})}
 /******/ 		Object.defineProperty(exports, '__esModule', { value: true });
 /******/ 	};
 /******/ })();
-/******/ 
+/******/
 /******/ /* webpack/runtime/compat */
-/******/ 
+/******/
 /******/ if (typeof __nccwpck_require__ !== 'undefined') __nccwpck_require__.ab = new URL('.', import.meta.url).pathname.slice(import.meta.url.match(/^file:\/\/\/\w:/) ? 1 : 0, -1) + "/";
-/******/ 
+/******/
 /******/ /* webpack/runtime/import chunk loading */
 /******/ (() => {
 /******/ 	// no baseURI
-/******/ 	
+/******/
 /******/ 	// object to store loaded and loading chunks
 /******/ 	// undefined = chunk not loaded, null = chunk preloaded/prefetched
 /******/ 	// [resolve, reject, Promise] = chunk loading, 0 = chunk loaded
 /******/ 	var installedChunks = {
 /******/ 		179: 0
 /******/ 	};
-/******/ 	
+/******/
 /******/ 	var installChunk = (data) => {
 /******/ 		var {ids, modules, runtime} = data;
 /******/ 		// add "modules" to the modules object,
@@ -13950,14 +13945,14 @@ return new B(c,{type:"multipart/form-data; boundary="+b})}
 /******/ 			}
 /******/ 			installedChunks[ids[i]] = 0;
 /******/ 		}
-/******/ 	
+/******/
 /******/ 	}
-/******/ 	
+/******/
 /******/ 	__nccwpck_require__.f.j = (chunkId, promises) => {
 /******/ 			// import() chunk loading for javascript
 /******/ 			var installedChunkData = __nccwpck_require__.o(installedChunks, chunkId) ? installedChunks[chunkId] : undefined;
 /******/ 			if(installedChunkData !== 0) { // 0 means "already installed".
-/******/ 	
+/******/
 /******/ 				// a Promise means "currently loading".
 /******/ 				if(installedChunkData) {
 /******/ 					promises.push(installedChunkData[1]);
@@ -13974,19 +13969,19 @@ return new B(c,{type:"multipart/form-data; boundary="+b})}
 /******/ 				}
 /******/ 			}
 /******/ 	};
-/******/ 	
+/******/
 /******/ 	// no external install chunk
-/******/ 	
+/******/
 /******/ 	// no on chunks loaded
 /******/ })();
-/******/ 
+/******/
 /************************************************************************/
-/******/ 
+/******/
 /******/ // startup
 /******/ // Load entry module and return exports
 /******/ // This entry module used 'module' so it can't be inlined
 /******/ var __webpack_exports__ = __nccwpck_require__(2092);
 /******/ __webpack_exports__ = await __webpack_exports__;
-/******/ 
+/******/
 
 //# sourceMappingURL=index.js.map
