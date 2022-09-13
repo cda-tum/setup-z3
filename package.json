@@ -1,6 +1,6 @@
 {
   "name": "setup-z3",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "A GitHub action to set up a specific version of the Z3 theorem prover in a GitHub Actions workflow.",
   "main": "lib/main.js",
   "type": "module",
