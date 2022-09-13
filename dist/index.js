@@ -10796,13 +10796,6 @@ module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("net");
 
 /***/ }),
 
-/***/ 7718:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:child_process");
-
-/***/ }),
-
 /***/ 9411:
 /***/ ((module) => {
 
@@ -13191,12 +13184,12 @@ function findAsset(assets, version, platform, architecture) {
 
 __nccwpck_require__.a(__webpack_module__, async (__webpack_handle_async_dependencies__) => {
 /* harmony import */ var _actions_core__WEBPACK_IMPORTED_MODULE_0__ = __nccwpck_require__(2186);
-/* harmony import */ var _actions_io__WEBPACK_IMPORTED_MODULE_1__ = __nccwpck_require__(7436);
-/* harmony import */ var _actions_tool_cache__WEBPACK_IMPORTED_MODULE_2__ = __nccwpck_require__(7784);
-/* harmony import */ var _get_download_link_js__WEBPACK_IMPORTED_MODULE_3__ = __nccwpck_require__(623);
-/* harmony import */ var node_path__WEBPACK_IMPORTED_MODULE_4__ = __nccwpck_require__(9411);
-/* harmony import */ var node_process__WEBPACK_IMPORTED_MODULE_5__ = __nccwpck_require__(7742);
-/* harmony import */ var node_child_process__WEBPACK_IMPORTED_MODULE_6__ = __nccwpck_require__(7718);
+/* harmony import */ var _actions_exec__WEBPACK_IMPORTED_MODULE_1__ = __nccwpck_require__(1514);
+/* harmony import */ var _actions_io__WEBPACK_IMPORTED_MODULE_2__ = __nccwpck_require__(7436);
+/* harmony import */ var _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__ = __nccwpck_require__(7784);
+/* harmony import */ var _get_download_link_js__WEBPACK_IMPORTED_MODULE_4__ = __nccwpck_require__(623);
+/* harmony import */ var node_path__WEBPACK_IMPORTED_MODULE_5__ = __nccwpck_require__(9411);
+/* harmony import */ var node_process__WEBPACK_IMPORTED_MODULE_6__ = __nccwpck_require__(7742);
 /*eslint import/no-unresolved: [2, { ignore: ['\\get-download-link.js$'] }]*/
 
 
@@ -13214,26 +13207,28 @@ async function run() {
     const platform = _actions_core__WEBPACK_IMPORTED_MODULE_0__.getInput("platform", { required: true });
     const architecture = _actions_core__WEBPACK_IMPORTED_MODULE_0__.getInput("architecture", { required: true });
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Determining Z3 asset URL");
-    const url = await (0,_get_download_link_js__WEBPACK_IMPORTED_MODULE_3__/* ["default"] */ .Z)(version, platform, architecture);
+    const url = await (0,_get_download_link_js__WEBPACK_IMPORTED_MODULE_4__/* ["default"] */ .Z)(version, platform, architecture);
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug(`==> Downloading Z3 asset: ${url.path}/${url.asset}`);
-    const file = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_2__.downloadTool(`${url.path}/${url.asset}`);
+    const file = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__.downloadTool(`${url.path}/${url.asset}`);
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Extracting Z3 asset");
-    const dir = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_2__.extractZip(node_path__WEBPACK_IMPORTED_MODULE_4__.resolve(file));
+    const dir = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__.extractZip(node_path__WEBPACK_IMPORTED_MODULE_5__.resolve(file));
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to tool cache");
-    const cachedPath = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_2__.cacheDir(dir, "z3", version);
+    const cachedPath = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__.cacheDir(dir, "z3", version);
     const z3Root = `${cachedPath}/${url.asset.replace(/\.zip$/, "")}`;
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.setOutput("z3-root", z3Root);
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to PATH");
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.addPath(`${z3Root}/bin`);
-    if (node_process__WEBPACK_IMPORTED_MODULE_5__.platform === "darwin") {
+    if (node_process__WEBPACK_IMPORTED_MODULE_6__.platform === "darwin") {
         _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Patching Z3 dynamic library");
-        const dylib = node_path__WEBPACK_IMPORTED_MODULE_4__.resolve(`${z3Root}/bin/libz3.dylib`);
+        const dylib = node_path__WEBPACK_IMPORTED_MODULE_5__.resolve(`${z3Root}/bin/libz3.dylib`);
         _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug(`==> Changing dylib ID from libz3.dylib to ${dylib}`);
-        node_child_process__WEBPACK_IMPORTED_MODULE_6__.exec(`install_name_tool -id ${dylib} -change $(basename ${dylib}) ${dylib} ${dylib}`);
+        const cmd = "install_name_tool";
+        const args = ["-id", dylib, "-change", `$(basename ${dylib})`, dylib, dylib];
+        await _actions_exec__WEBPACK_IMPORTED_MODULE_1__.exec(cmd, args);
     }
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Deleting temporary files");
-    await _actions_io__WEBPACK_IMPORTED_MODULE_1__.rmRF(file);
-    await _actions_io__WEBPACK_IMPORTED_MODULE_1__.rmRF(dir);
+    await _actions_io__WEBPACK_IMPORTED_MODULE_2__.rmRF(file);
+    await _actions_io__WEBPACK_IMPORTED_MODULE_2__.rmRF(dir);
 }
 try {
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Starting Z3 setup");
