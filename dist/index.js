@@ -13218,7 +13218,7 @@ async function run() {
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.setOutput("z3-root", z3Root);
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to PATH");
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.addPath(`${z3Root}/bin`);
-    if (platform === "macOS" || (platform === "host" && node_process__WEBPACK_IMPORTED_MODULE_6__.platform === "darwin")) {
+    if (node_process__WEBPACK_IMPORTED_MODULE_6__.platform === "darwin") {
         _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Patching Z3 dynamic library");
         const dylib = node_path__WEBPACK_IMPORTED_MODULE_5__.resolve(`${z3Root}/bin/libz3.dylib`);
         _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug(`==> Changing dylib ID from libz3.dylib to ${dylib}`);

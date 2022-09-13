@@ -31,7 +31,7 @@ async function run(): Promise<void> {
   core.debug("==> Adding Z3 to PATH")
   core.addPath(`${z3Root}/bin`)
 
-  if (platform === "macOS" || (platform === "host" && process.platform === "darwin")) {
+  if (process.platform === "darwin") {
     core.debug("==> Patching Z3 dynamic library")
     const dylib = path.resolve(`${z3Root}/bin/libz3.dylib`)
     core.debug(`==> Changing dylib ID from libz3.dylib to ${dylib}`)
