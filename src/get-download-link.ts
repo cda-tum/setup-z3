@@ -1,5 +1,8 @@
 import process from "node:process"
-const fetch = require("node-fetch-retry")
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+// eslint-disable-next-line import/default
+import fetch from "node-fetch-retry"
 
 /**
  * Determine the URL of the Z3 release asset for the given platform and architecture.
