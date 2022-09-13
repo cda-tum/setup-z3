@@ -6740,6 +6740,7 @@ module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("worker_threa
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
+// eslint-disable-next-line import/default
 
 /**
  * Determine the URL of the Z3 release asset for the given platform and architecture.
