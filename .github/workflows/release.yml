@@ -5,11 +5,6 @@ on:
     branches: main
     types: [published]
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Which tag to update to"
-        default: "v1"
-        required: true
 
 jobs:
   re-tag:
@@ -18,12 +13,12 @@ jobs:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          ref: "main"
+          ref: main
       - name: update tag
         run: |
           git config user.name 'github-actions'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git tag --delete ${{ inputs.tag }} || true
-          git push --delete origin ${{ inputs.tag }} || true
-          git tag -a ${{ inputs.tag }} -m '🔖 Re-tag ${{ inputs.tag }}'
-          git push origin ${{ inputs.tag }}
+          git tag --delete v1 || true
+          git push --delete origin v1 || true
+          git tag -a v1 -m '🔖 Re-tag v1'
+          git push origin v1
