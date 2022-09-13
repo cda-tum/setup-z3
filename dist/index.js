@@ -6881,18 +6881,18 @@ async function run() {
     const dir = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__.extractZip(node_path__WEBPACK_IMPORTED_MODULE_5__.resolve(file));
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to tool cache");
     const cachedPath = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__.cacheDir(dir, "z3", version);
-    const z3Root = `${cachedPath}/${url.asset.replace(/\.zip$/, "")}`;
+    const z3Root = node_path__WEBPACK_IMPORTED_MODULE_5__.join(cachedPath, `${url.asset.replace(/\.zip$/, "")}`);
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.setOutput("z3-root", z3Root);
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to PATH");
-    _actions_core__WEBPACK_IMPORTED_MODULE_0__.addPath(`${z3Root}/bin`);
+    _actions_core__WEBPACK_IMPORTED_MODULE_0__.addPath(node_path__WEBPACK_IMPORTED_MODULE_5__.join(z3Root, "bin"));
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Exporting Z3_ROOT");
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.exportVariable("Z3_ROOT", z3Root);
     if (node_process__WEBPACK_IMPORTED_MODULE_6__.platform === "darwin") {
         _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Patching Z3 dynamic library");
-        const dylib = node_path__WEBPACK_IMPORTED_MODULE_5__.resolve(`${z3Root}/bin/libz3.dylib`);
+        const dylib = node_path__WEBPACK_IMPORTED_MODULE_5__.join(z3Root, "bin", "libz3.dylib");
         _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug(`==> Changing dylib ID from libz3.dylib to ${dylib}`);
         const cmd = "install_name_tool";
-        const args = ["-id", dylib, "-change", `$(basename ${dylib})`, dylib, dylib];
+        const args = ["-id", dylib, "-change", node_path__WEBPACK_IMPORTED_MODULE_5__.basename(dylib), dylib, dylib];
         await _actions_exec__WEBPACK_IMPORTED_MODULE_1__.exec(cmd, args);
     }
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Deleting temporary files");

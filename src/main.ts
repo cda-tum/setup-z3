@@ -25,20 +25,20 @@ async function run(): Promise<void> {
   core.debug("==> Adding Z3 to tool cache")
   const cachedPath = await tc.cacheDir(dir, "z3", version)
 
-  const z3Root = `${cachedPath}/${url.asset.replace(/\.zip$/, "")}`
+  const z3Root = path.join(cachedPath, `${url.asset.replace(/\.zip$/, "")}`)
   core.setOutput("z3-root", z3Root)
 
   core.debug("==> Adding Z3 to PATH")
-  core.addPath(`${z3Root}/bin`)
+  core.addPath(path.join(z3Root, "bin"))
   core.debug("==> Exporting Z3_ROOT")
   core.exportVariable("Z3_ROOT", z3Root)
 
   if (process.platform === "darwin") {
     core.debug("==> Patching Z3 dynamic library")
-    const dylib = path.resolve(`${z3Root}/bin/libz3.dylib`)
+    const dylib = path.join(z3Root, "bin", "libz3.dylib")
     core.debug(`==> Changing dylib ID from libz3.dylib to ${dylib}`)
     const cmd = "install_name_tool"
-    const args = ["-id", dylib, "-change", `$(basename ${dylib})`, dylib, dylib]
+    const args = ["-id", dylib, "-change", path.basename(dylib), dylib, dylib]
     await exec.exec(cmd, args)
   }
 
