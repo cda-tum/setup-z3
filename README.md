@@ -12,14 +12,7 @@ To download the latest version of Z3 for the host platform and add it to the `PA
   uses: cda-tum/setup-z3@v1
 ```
 
-This action creates a `z3-root` output variable that contains the path to the root directory of the Z3 installation. You can use this variable, e.g., to set the `Z3_ROOT` environment variable for subsequent steps in a job:
-
-```yaml
-- name: Use Z3
-  runs: ...
-  env:
-    Z3_ROOT: ${{ steps.z3.outputs.z3-root }}
-```
+This action creates a `z3-root` output variable that contains the path to the root directory of the Z3 installation and exports the `Z3_ROOT` environment variable for subsequent steps in a job. The output variable can be accessed as `${{ steps.z3.outputs.z3-root }}`.
 
 ### Specifying a version
 
