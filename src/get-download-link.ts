@@ -1,5 +1,9 @@
 import process from "node:process"
-import fetch from "node-fetch"
+import {Octokit} from "@octokit/action"
+// eslint-disable-next-line import/no-unresolved
+import {components} from "@octokit/openapi-types"
+
+type ReleaseAsset = components["schemas"]["release-asset"]
 
 /**
  * Determine the URL of the Z3 release asset for the given platform and architecture.
@@ -23,14 +27,11 @@ export default async function getDownloadLink(
     architecture = determineArchitecture()
   }
 
-  // set the download path to the Z3 release
-  const path = `https://github.com/Z3Prover/z3/releases/download/${release.version}`
-
   // determine the file name of the Z3 release depending on the platform and architecture
   const asset = findAsset(release.assets, release.version, platform, architecture)
 
   if (asset) {
-    return {path, asset}
+    return {asset: asset.name, path: asset.browser_download_url}
   } else {
     throw new Error(`No ${version} Z3 asset for ${architecture} ${platform} found.`)
   }
@@ -69,45 +70,50 @@ function determineArchitecture(): string {
 /**
  * Get the Z3 release assets for the given version from GitHub.
  * @param version - Z3 release version (defaults to latest)
- * @returns {Promise<{assets: Array, version: string}>} - list of assets of a Z3 release and the release version
+ * @returns {Promise<{assets: ReleaseAsset[], version: string}>} - list of assets of a Z3 release and the release version
  */
-async function getRelease(version: string): Promise<{assets: string[]; version: string}> {
-  let url
+async function getRelease(version: string): Promise<{assets: ReleaseAsset[]; version: string}> {
+  const octokit = new Octokit()
   if (version === "latest") {
-    url = "https://api.github.com/repos/Z3Prover/z3/releases/latest"
+    const response = await octokit.request("GET /repos/{owner}/{repo}/releases/latest", {
+      owner: "Z3Prover",
+      repo: "z3"
+    })
+    return {assets: response.data.assets, version: response.data.tag_name}
   } else {
-    url = `https://api.github.com/repos/Z3Prover/z3/releases/tags/z3-${version}`
+    const response = await octokit.request("GET /repos/{owner}/{repo}/releases/tags/z3-{tag}", {
+      owner: "Z3Prover",
+      repo: "z3",
+      tag: version
+    })
+    return {assets: response.data.assets, version: response.data.tag_name}
   }
-  const response = await fetch(url)
-  if (response.status !== 200) {
-    throw new Error(`Invalid Z3 version: ${version}`)
-  }
-
-  const json = (await response.json()) as {assets: {name: string}[]; tag_name: string}
-  const assets = json.assets.map(asset => asset.name)
-
-  return {assets, version: json.tag_name}
 }
 
 /**
  * Find the Z3 release asset for the given platform and architecture.
- * @param {Array} assets - list of assets of a Z3 release
+ * @param {ReleaseAsset[]} assets - list of assets of a Z3 release
  * @param {string} version - Z3 release version
  * @param {string} platform - platform to look for (either linux, macOS, or windows)
  * @param {string} architecture - architecture to look for (either x64, x86, or arm64)
- * @returns {(string | undefined)} - name of the Z3 release asset or undefined if not found
+ * @returns {(ReleaseAsset | undefined)} - Z3 release asset or undefined if not found
  */
-function findAsset(assets: string[], version: string, platform: string, architecture: string): string | undefined {
+function findAsset(
+  assets: ReleaseAsset[],
+  version: string,
+  platform: string,
+  architecture: string
+): ReleaseAsset | undefined {
   if (platform === "linux") {
-    return assets.find(asset => asset.match(new RegExp(`^${version}-${architecture}-(ubuntu|glibc)-.*$`)))
+    return assets.find(asset => asset.name.match(new RegExp(`^${version}-${architecture}-(ubuntu|glibc)-.*$`)))
   }
 
   if (platform === "macOS") {
-    return assets.find(asset => asset.match(new RegExp(`^${version}-${architecture}-osx-.*$`)))
+    return assets.find(asset => asset.name.match(new RegExp(`^${version}-${architecture}-osx-.*$`)))
   }
 
   if (platform === "windows") {
-    return assets.find(asset => asset.match(new RegExp(`^${version}-${architecture}-win.*$`)))
+    return assets.find(asset => asset.name.match(new RegExp(`^${version}-${architecture}-win.*$`)))
   }
 
   throw new Error(`Invalid platform: ${platform}`)
