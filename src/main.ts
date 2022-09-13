@@ -30,6 +30,8 @@ async function run(): Promise<void> {
 
   core.debug("==> Adding Z3 to PATH")
   core.addPath(`${z3Root}/bin`)
+  core.debug("==> Exporting Z3_ROOT")
+  core.exportVariable("Z3_ROOT", z3Root)
 
   if (process.platform === "darwin") {
     core.debug("==> Patching Z3 dynamic library")
