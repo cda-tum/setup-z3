@@ -34,13 +34,15 @@ jobs:
         id: z3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - if: runner.os != 'Windows'
+      - name: Test if z3 exists (Unix)
+        if: runner.os != 'Windows'
         run: |
           echo "${{ steps.z3.outputs.z3-root }}"
           [ -d "${{ steps.z3.outputs.z3-root }}" ] || exit 1
           [ -f "${{ steps.z3.outputs.z3-root }}/z3" ] || exit 1
         shell: sh
-      - if: runner.os == 'Windows'
+      - name: Test if z3 exists (Windows)
+        if: runner.os == 'Windows'
         run: |
           echo "${{ steps.z3.outputs.z3-root }}"
           [ -d "${{ steps.z3.outputs.z3-root }}" ] || exit 1
