@@ -9,6 +9,10 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+  
+defaults:
+  run:
+    shell: sh
 
 jobs:
   # unit tests
@@ -34,19 +38,9 @@ jobs:
         id: z3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Test if z3 exists (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          echo "${{ steps.z3.outputs.z3-root }}"
-          [ -d "${{ steps.z3.outputs.z3-root }}" ] || exit 126
-          ls -R "${{ steps.z3.outputs.z3-root }}"
-          [ -f "${{ steps.z3.outputs.z3-root }}/z3" ] || exit 127
-        shell: sh
-      - name: Test if z3 exists (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          echo "${{ steps.z3.outputs.z3-root }}"
-          [ -d "${{ steps.z3.outputs.z3-root }}" ] || exit 126
-          ls -R "${{ steps.z3.outputs.z3-root }}"
-          [ -f "${{ steps.z3.outputs.z3-root }}\z3.exe" ] || exit 127
-        shell: sh
+      - run: echo "${{ steps.z3.outputs.z3-root }}"
+      - run: '[ -d "${{ steps.z3.outputs.z3-root }}" ] || exit 1'
+      - if: runner.os != 'Windows'
+        run: '[ -f "${{ steps.z3.outputs.z3-root }}/bin/z3" ] || exit 1'
+      - if: runner.os == 'Windows'
+        run: '[ -f "${{ steps.z3.outputs.z3-root }}\bin\z3.exe" ] || exit 1'
