@@ -39,6 +39,7 @@ jobs:
         run: |
           echo "${{ steps.z3.outputs.z3-root }}"
           [ -d "${{ steps.z3.outputs.z3-root }}" ] || exit 126
+          ls "${{ steps.z3.outputs.z3-root }}"
           [ -f "${{ steps.z3.outputs.z3-root }}/z3" ] || exit 127
         shell: sh
       - name: Test if z3 exists (Windows)
@@ -46,5 +47,6 @@ jobs:
         run: |
           echo "${{ steps.z3.outputs.z3-root }}"
           [ -d "${{ steps.z3.outputs.z3-root }}" ] || exit 126
+          ls "${{ steps.z3.outputs.z3-root }}"
           [ -f "${{ steps.z3.outputs.z3-root }}\z3.exe" ] || exit 127
         shell: sh
