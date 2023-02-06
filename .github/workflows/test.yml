@@ -38,13 +38,13 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           echo "${{ steps.z3.outputs.z3-root }}"
-          [ -d "${{ steps.z3.outputs.z3-root }}" ] || exit 1
-          [ -f "${{ steps.z3.outputs.z3-root }}/z3" ] || exit 1
+          [ -d "${{ steps.z3.outputs.z3-root }}" ] || exit 126
+          [ -f "${{ steps.z3.outputs.z3-root }}/z3" ] || exit 127
         shell: sh
       - name: Test if z3 exists (Windows)
         if: runner.os == 'Windows'
         run: |
           echo "${{ steps.z3.outputs.z3-root }}"
-          [ -d "${{ steps.z3.outputs.z3-root }}" ] || exit 1
-          [ -f "${{ steps.z3.outputs.z3-root }}\z3.exe" ] || exit 1
+          [ -d "${{ steps.z3.outputs.z3-root }}" ] || exit 126
+          [ -f "${{ steps.z3.outputs.z3-root }}\z3.exe" ] || exit 127
         shell: sh
