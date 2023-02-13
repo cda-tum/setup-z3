@@ -1,13 +1,14 @@
 name: "units-test"
 on:
   pull_request:
+  merge_group:
   push:
     branches:
       - main
       - "releases/*"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
   
 defaults:
