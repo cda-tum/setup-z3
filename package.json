@@ -32,7 +32,7 @@
     "@actions/tool-cache": "^2.0.1",
     "@octokit/action": "^5.0.2",
     "@octokit/core": "^4.2.0",
-    "@octokit/openapi-types": "^16.0.0",
+    "@octokit/openapi-types": "^17.1.0",
     "node-fetch-retry": "^2.0.1"
   },
   "devDependencies": {
