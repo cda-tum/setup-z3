@@ -5,11 +5,10 @@
   "main": "lib/main.js",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && ncc build --source-map --license licenses.txt",
     "lint": "eslint src/**/*.ts",
-    "package": "ncc build --source-map --license licenses.txt --target es2022",
     "test": "jest",
-    "all": "npm run build && npm run lint && npm run package && npm test"
+    "all": "npm run build && npm run lint && npm test"
   },
   "repository": {
     "type": "git",
