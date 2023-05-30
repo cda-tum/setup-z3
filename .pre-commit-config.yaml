@@ -7,6 +7,11 @@
 #     pre-commit install
 #
 
+exclude: >
+  (?x)^(
+      dist/.*|package.*\.json
+  )$
+
 ci:
   autoupdate_commit_msg: "⬆️🪝 update pre-commit hooks"
   autofix_commit_msg: "🎨 pre-commit fixes"
@@ -35,10 +40,9 @@ repos:
 
   # Check for spelling
   - repo: https://github.com/codespell-project/codespell
-    rev: "v2.2.1"
+    rev: "v2.2.4"
     hooks:
       - id: codespell
-        args: ["-L", "wille,linz,inflight"]
 
   # Format configuration files with prettier
   - repo: https://github.com/pre-commit/mirrors-prettier
