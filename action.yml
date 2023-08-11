@@ -17,9 +17,24 @@ inputs:
 outputs:
   z3-root:
     description: "The root directory of the Z3 installation"
+    value: ${{ steps.action.outputs.z3-root }}
 runs:
-  using: "node16"
-  main: "dist/index.js"
+  using: composite
+  steps:
+    - name: Setup Node
+      uses: actions/setup-node@v3
+      with:
+        node-version: 18
+    - name: Action
+      id: action
+      run: |
+        node dist/index.js
+        echo "{z3-root}={value1}" >> $GITHUB_OUTPUT
+      shell: ${{ (runner.os == 'Windows' && 'pwsh') || 'bash' }}
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_PLATFORM: ${{ inputs.platform }}
+        INPUT_ARCHITECTURE: ${{ inputs.architecture }}
 branding:
   icon: "package"
   color: "blue"
