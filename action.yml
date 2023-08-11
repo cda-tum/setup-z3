@@ -28,7 +28,7 @@ runs:
     - name: Action
       id: action
       run: |
-        node ${{ github.action_path }}/dist/index.js
+        node dist/index.js
         echo "{z3-root}={value1}" >> $GITHUB_OUTPUT
       shell: ${{ (runner.os == 'Windows' && 'pwsh') || 'bash' }}
       env:
