@@ -2,20 +2,25 @@ version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    groups:
+      github-actions:
+        patterns:
+          - "*"
     schedule:
       interval: weekly
       day: "monday"
       time: "06:00"
       timezone: "Europe/Vienna"
-    assignees:
-      - "burgholzer"
 
   - package-ecosystem: npm
     directory: /
+    groups:
+      production-dependencies:
+        dependency-type: "production"
+      development-dependencies:
+        dependency-type: "development"
     schedule:
       interval: weekly
       day: "monday"
       time: "06:00"
       timezone: "Europe/Vienna"
-    assignees:
-      - "burgholzer"
