@@ -34793,23 +34793,31 @@ async function run() {
     if (addToLibraryPath) {
         if (node_process__WEBPACK_IMPORTED_MODULE_6__.platform === "darwin") {
             // On macOS, we want to update CPATH, LIBRARY_PATH and DYLD_LIBRARY_PATH
+            _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to CPATH");
             appendEnv("CPATH", `${z3Root}/include`);
+            _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to LIBRARY_PATH");
             appendEnv("LIBRARY_PATH", `${z3Root}/bin`);
+            _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to DYLD_LIBRARY_PATH");
             appendEnv("DYLD_LIBRARY_PATH", `${z3Root}/bin`);
         }
         else if (node_process__WEBPACK_IMPORTED_MODULE_6__.platform === "linux") {
             // On linux, we want to update CPATH, LIBRARY_PATH and LD_LIBRARY_PATH
+            _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to CPATH");
             appendEnv("CPATH", `${z3Root}/include`);
+            _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to LIBRARY_PATH");
             appendEnv("LIBRARY_PATH", `${z3Root}/bin`);
+            _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to LD_LIBRARY_PATH");
             appendEnv("LD_LIBRARY_PATH", `${z3Root}/bin`);
         }
         else if (node_process__WEBPACK_IMPORTED_MODULE_6__.platform === "win32") {
             // On windows, it is CPATH and LIB. Windows should search for .dll files in PATH already.
+            _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to CPATH");
             appendEnv("CPATH", `${z3Root}\\include`);
+            _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to LIB");
             appendEnv("LIB", `${z3Root}\\bin`);
         }
         else {
-            _actions_core__WEBPACK_IMPORTED_MODULE_0__.warning(` ==> Canot set library paths on ${node_process__WEBPACK_IMPORTED_MODULE_6__.platform}`);
+            _actions_core__WEBPACK_IMPORTED_MODULE_0__.warning(` ==> Canot set library paths on platform ${node_process__WEBPACK_IMPORTED_MODULE_6__.platform}`);
         }
     }
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Deleting temporary files");

@@ -46,20 +46,28 @@ async function run(): Promise<void> {
   if (addToLibraryPath) {
     if (process.platform === "darwin") {
       // On macOS, we want to update CPATH, LIBRARY_PATH and DYLD_LIBRARY_PATH
+      core.debug("==> Adding Z3 to CPATH")
       appendEnv("CPATH", `${z3Root}/include`)
+      core.debug("==> Adding Z3 to LIBRARY_PATH")
       appendEnv("LIBRARY_PATH", `${z3Root}/bin`)
+      core.debug("==> Adding Z3 to DYLD_LIBRARY_PATH")
       appendEnv("DYLD_LIBRARY_PATH", `${z3Root}/bin`)
     } else if (process.platform === "linux") {
       // On linux, we want to update CPATH, LIBRARY_PATH and LD_LIBRARY_PATH
+      core.debug("==> Adding Z3 to CPATH")
       appendEnv("CPATH", `${z3Root}/include`)
+      core.debug("==> Adding Z3 to LIBRARY_PATH")
       appendEnv("LIBRARY_PATH", `${z3Root}/bin`)
+      core.debug("==> Adding Z3 to LD_LIBRARY_PATH")
       appendEnv("LD_LIBRARY_PATH", `${z3Root}/bin`)
     } else if (process.platform === "win32") {
       // On windows, it is CPATH and LIB. Windows should search for .dll files in PATH already.
+      core.debug("==> Adding Z3 to CPATH")
       appendEnv("CPATH", `${z3Root}\\include`)
+      core.debug("==> Adding Z3 to LIB")
       appendEnv("LIB", `${z3Root}\\bin`)
     } else {
-      core.warning(` ==> Canot set library paths on ${process.platform}`)
+      core.warning(` ==> Canot set library paths on platform ${process.platform}`)
     }
   }
 
