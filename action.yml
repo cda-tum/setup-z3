@@ -14,7 +14,7 @@ inputs:
     description: "The architecture to install Z3 for (either x64 or arm64). Defaults to host."
     required: false
     default: "host"
-  add-to-library-path:
+  add_to_library_path:
     description: "Add Z3 to the library path variables, such that it can be used as a static/dynamic library. Defaults to false."
     required: false
     default: "false"

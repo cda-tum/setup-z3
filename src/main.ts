@@ -15,7 +15,7 @@ async function run(): Promise<void> {
   const version = core.getInput("version", {required: true})
   const platform = core.getInput("platform", {required: true})
   const architecture = core.getInput("architecture", {required: true})
-  const addToLibraryPath = core.getBooleanInput("add-to-library-path", {required: false})
+  const addToLibraryPath = core.getBooleanInput("add_to_library_path", {required: false})
 
   core.debug("==> Determining Z3 asset URL")
   const url = await getDownloadLink(version, platform, architecture)
@@ -67,7 +67,7 @@ async function run(): Promise<void> {
       core.debug("==> Adding Z3 to LIB")
       appendEnv("LIB", `${z3Root}\\bin`)
     } else {
-      core.warning(` ==> Canot set library paths on platform ${process.platform}`)
+      core.warning(` ==> Cannot set library paths on platform ${process.platform}`)
     }
   }
 

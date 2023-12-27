@@ -34767,7 +34767,7 @@ async function run() {
     const version = _actions_core__WEBPACK_IMPORTED_MODULE_0__.getInput("version", { required: true });
     const platform = _actions_core__WEBPACK_IMPORTED_MODULE_0__.getInput("platform", { required: true });
     const architecture = _actions_core__WEBPACK_IMPORTED_MODULE_0__.getInput("architecture", { required: true });
-    const addToLibraryPath = _actions_core__WEBPACK_IMPORTED_MODULE_0__.getBooleanInput("add-to-library-path", { required: false });
+    const addToLibraryPath = _actions_core__WEBPACK_IMPORTED_MODULE_0__.getBooleanInput("add_to_library_path", { required: false });
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Determining Z3 asset URL");
     const url = await (0,_get_download_link_js__WEBPACK_IMPORTED_MODULE_4__/* ["default"] */ .Z)(version, platform, architecture);
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug(`==> Downloading Z3 asset: ${url.path}`);
@@ -34817,7 +34817,7 @@ async function run() {
             appendEnv("LIB", `${z3Root}\\bin`);
         }
         else {
-            _actions_core__WEBPACK_IMPORTED_MODULE_0__.warning(` ==> Canot set library paths on platform ${node_process__WEBPACK_IMPORTED_MODULE_6__.platform}`);
+            _actions_core__WEBPACK_IMPORTED_MODULE_0__.warning(` ==> Cannot set library paths on platform ${node_process__WEBPACK_IMPORTED_MODULE_6__.platform}`);
         }
     }
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Deleting temporary files");
