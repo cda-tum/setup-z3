@@ -60,7 +60,6 @@ If you want to explicitly specify the platform and architecture for which Z3 sho
 > - `platform: macOS`, `architecture: arm64`
 > - `platform: windows`, `architecture: x64`
 
-
 ### Using Z3 as a library
 
 By default, the action only adds Z3 into `PATH`, meaning it cannot be used as a library through its C/C++ bindings. However, if you set `add-to-library-path` to `true`, the action also populates other environment variables (depending on the chosen platform) which ensure that you can build other libraries that link against Z3.
