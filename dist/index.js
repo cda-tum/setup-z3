@@ -34767,6 +34767,7 @@ async function run() {
     const version = _actions_core__WEBPACK_IMPORTED_MODULE_0__.getInput("version", { required: true });
     const platform = _actions_core__WEBPACK_IMPORTED_MODULE_0__.getInput("platform", { required: true });
     const architecture = _actions_core__WEBPACK_IMPORTED_MODULE_0__.getInput("architecture", { required: true });
+    const addToLibraryPath = _actions_core__WEBPACK_IMPORTED_MODULE_0__.getBooleanInput("add-to-library-path", { required: false });
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Determining Z3 asset URL");
     const url = await (0,_get_download_link_js__WEBPACK_IMPORTED_MODULE_4__/* ["default"] */ .Z)(version, platform, architecture);
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug(`==> Downloading Z3 asset: ${url.path}`);
@@ -34789,6 +34790,28 @@ async function run() {
         const args = ["-id", dylib, "-change", node_path__WEBPACK_IMPORTED_MODULE_5__.basename(dylib), dylib, dylib];
         await _actions_exec__WEBPACK_IMPORTED_MODULE_1__.exec(cmd, args);
     }
+    if (addToLibraryPath) {
+        if (node_process__WEBPACK_IMPORTED_MODULE_6__.platform === "darwin") {
+            // On macOS, we want to update CPATH, LIBRARY_PATH and DYLD_LIBRARY_PATH
+            appendEnv("CPATH", `${z3Root}/include`);
+            appendEnv("LIBRARY_PATH", `${z3Root}/bin`);
+            appendEnv("DYLD_LIBRARY_PATH", `${z3Root}/bin`);
+        }
+        else if (node_process__WEBPACK_IMPORTED_MODULE_6__.platform === "linux") {
+            // On linux, we want to update CPATH, LIBRARY_PATH and LD_LIBRARY_PATH
+            appendEnv("CPATH", `${z3Root}/include`);
+            appendEnv("LIBRARY_PATH", `${z3Root}/bin`);
+            appendEnv("LD_LIBRARY_PATH", `${z3Root}/bin`);
+        }
+        else if (node_process__WEBPACK_IMPORTED_MODULE_6__.platform === "win32") {
+            // On windows, it is CPATH and LIB. Windows should search for .dll files in PATH already.
+            appendEnv("CPATH", `${z3Root}\\include`);
+            appendEnv("LIB", `${z3Root}\\bin`);
+        }
+        else {
+            _actions_core__WEBPACK_IMPORTED_MODULE_0__.warning(` ==> Canot set library paths on ${node_process__WEBPACK_IMPORTED_MODULE_6__.platform}`);
+        }
+    }
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Deleting temporary files");
     await _actions_io__WEBPACK_IMPORTED_MODULE_2__.rmRF(file);
     await _actions_io__WEBPACK_IMPORTED_MODULE_2__.rmRF(dir);
@@ -34804,6 +34827,15 @@ catch (error) {
     }
     else if (error instanceof Error) {
         _actions_core__WEBPACK_IMPORTED_MODULE_0__.setFailed(error.message);
+    }
+}
+function appendEnv(varName, value) {
+    const sep = node_process__WEBPACK_IMPORTED_MODULE_6__.platform === "win32" ? ";" : ":";
+    if (varName in node_process__WEBPACK_IMPORTED_MODULE_6__.env) {
+        _actions_core__WEBPACK_IMPORTED_MODULE_0__.exportVariable(varName, node_process__WEBPACK_IMPORTED_MODULE_6__.env[varName] + sep + value);
+    }
+    else {
+        _actions_core__WEBPACK_IMPORTED_MODULE_0__.exportVariable(varName, value);
     }
 }
 

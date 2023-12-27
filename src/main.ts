@@ -15,6 +15,7 @@ async function run(): Promise<void> {
   const version = core.getInput("version", {required: true})
   const platform = core.getInput("platform", {required: true})
   const architecture = core.getInput("architecture", {required: true})
+  const addToLibraryPath = core.getBooleanInput("add-to-library-path", {required: false})
 
   core.debug("==> Determining Z3 asset URL")
   const url = await getDownloadLink(version, platform, architecture)
@@ -42,6 +43,26 @@ async function run(): Promise<void> {
     await exec.exec(cmd, args)
   }
 
+  if (addToLibraryPath) {
+    if (process.platform === "darwin") {
+      // On macOS, we want to update CPATH, LIBRARY_PATH and DYLD_LIBRARY_PATH
+      appendEnv("CPATH", `${z3Root}/include`)
+      appendEnv("LIBRARY_PATH", `${z3Root}/bin`)
+      appendEnv("DYLD_LIBRARY_PATH", `${z3Root}/bin`)
+    } else if (process.platform === "linux") {
+      // On linux, we want to update CPATH, LIBRARY_PATH and LD_LIBRARY_PATH
+      appendEnv("CPATH", `${z3Root}/include`)
+      appendEnv("LIBRARY_PATH", `${z3Root}/bin`)
+      appendEnv("LD_LIBRARY_PATH", `${z3Root}/bin`)
+    } else if (process.platform === "win32") {
+      // On windows, it is CPATH and LIB. Windows should search for .dll files in PATH already.
+      appendEnv("CPATH", `${z3Root}\\include`)
+      appendEnv("LIB", `${z3Root}\\bin`)
+    } else {
+      core.warning(` ==> Canot set library paths on ${process.platform}`)
+    }
+  }
+
   core.debug("==> Deleting temporary files")
   await io.rmRF(file)
   await io.rmRF(dir)
@@ -56,5 +77,14 @@ try {
     core.setFailed(error)
   } else if (error instanceof Error) {
     core.setFailed(error.message)
+  }
+}
+
+function appendEnv(varName: string, value: string): void {
+  const sep = process.platform === "win32" ? ";" : ":"
+  if (varName in process.env) {
+    core.exportVariable(varName, process.env[varName] + sep + value)
+  } else {
+    core.exportVariable(varName, value)
   }
 }
