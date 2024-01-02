@@ -3,7 +3,7 @@ import * as exec from "@actions/exec"
 import * as path from "path"
 import {expect, test} from "@jest/globals"
 
-function executeTest(version = "latest", platform = "host", architecture = "host") {
+function executeTest(version = "latest", platform = "host", architecture = "host", addToLibraryPath = "false") {
   const options = {
     cwd: path.resolve(__dirname, "../lib"),
     env: {
@@ -11,6 +11,7 @@ function executeTest(version = "latest", platform = "host", architecture = "host
       INPUT_VERSION: version,
       INPUT_PLATFORM: platform,
       INPUT_ARCHITECTURE: architecture,
+      INPUT_ADD_TO_LIBRARY_PATH: addToLibraryPath,
       RUNNER_TEMP: "/tmp",
       RUNNER_TOOL_CACHE: "/tmp"
     }
@@ -34,7 +35,7 @@ test("macOS_arm_latest", async () => {
 })
 
 test("windows_latest", async () => {
-  const ret = await executeTest("latest", "windows")
+  const ret = await executeTest("latest", "windows", "host", "true")
   expect(ret).toEqual(0)
 })
 
@@ -44,11 +45,11 @@ test("specific_version", async () => {
 })
 
 test("old_version_macOS", async () => {
-  const ret = await executeTest("4.8.11", "macOS")
+  const ret = await executeTest("4.8.11", "macOS", "host", "true")
   expect(ret).toEqual(0)
 })
 
 test("old_version_linux", async () => {
-  const ret = await executeTest("4.8.10", "linux")
+  const ret = await executeTest("4.8.10", "linux", "host", "true")
   expect(ret).toEqual(0)
 })
