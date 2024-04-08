@@ -4027,7 +4027,7 @@ var import_plugin_paginate_rest = __nccwpck_require__(4193);
 var import_plugin_rest_endpoint_methods = __nccwpck_require__(3044);
 
 // pkg/dist-src/version.js
-var VERSION = "6.0.7";
+var VERSION = "6.1.0";
 
 // pkg/dist-src/index.js
 var import_undici = __nccwpck_require__(1773);
