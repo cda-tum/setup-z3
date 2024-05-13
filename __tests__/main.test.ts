@@ -1,7 +1,7 @@
-import * as process from "process"
-import * as exec from "@actions/exec"
-import * as path from "path"
-import {expect, test} from "@jest/globals"
+const process = require("process");
+const exec = require("@actions/exec");
+const path = require("path");
+const { expect, test } = require("@jest/globals");
 
 function executeTest(version = "latest", platform = "host", architecture = "host", addToLibraryPath = "false") {
   const options = {

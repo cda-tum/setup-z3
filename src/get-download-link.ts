@@ -1,7 +1,7 @@
 import process from "node:process"
-import {Octokit} from "@octokit/action"
 // eslint-disable-next-line import/no-unresolved
-import {components} from "@octokit/openapi-types"
+import {Octokit} from "@octokit/action"
+import type {components} from "@octokit/openapi-types"
 
 type ReleaseAsset = components["schemas"]["release-asset"]
 
@@ -105,15 +105,15 @@ function findAsset(
   architecture: string
 ): ReleaseAsset | undefined {
   if (platform === "linux") {
-    return assets.find(asset => asset.name.match(new RegExp(`^${version}-${architecture}-(ubuntu|glibc)-.*$`)))
+    return assets.find(asset => RegExp(new RegExp(`^${version}-${architecture}-(ubuntu|glibc)-.*$`)).exec(asset.name))
   }
 
   if (platform === "macOS") {
-    return assets.find(asset => asset.name.match(new RegExp(`^${version}-${architecture}-osx-.*$`)))
+    return assets.find(asset => RegExp(new RegExp(`^${version}-${architecture}-osx-.*$`)).exec(asset.name))
   }
 
   if (platform === "windows") {
-    return assets.find(asset => asset.name.match(new RegExp(`^${version}-${architecture}-win.*$`)))
+    return assets.find(asset => RegExp(new RegExp(`^${version}-${architecture}-win.*$`)).exec(asset.name))
   }
 
   throw new Error(`Invalid platform: ${platform}`)
