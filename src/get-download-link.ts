@@ -1,7 +1,6 @@
 import process from "node:process"
 import {Octokit} from "@octokit/action"
-// eslint-disable-next-line import/no-unresolved
-import {components} from "@octokit/openapi-types"
+import type {components} from "@octokit/openapi-types"
 
 type ReleaseAsset = components["schemas"]["release-asset"]
 
