@@ -4,6 +4,9 @@
   "description": "A GitHub action to set up a specific version of the Z3 theorem prover in a GitHub Actions workflow.",
   "main": "lib/main.js",
   "type": "module",
+  "engines": {
+    "node": ">=16"
+  },
   "scripts": {
     "build": "tsc && ncc build --source-map --license licenses.txt",
     "lint": "eslint src/**/*.ts",
