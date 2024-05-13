@@ -59765,6 +59765,7 @@ function getApiBaseUrl() {
 
 ;// CONCATENATED MODULE: ./lib/get-download-link.js
 
+// eslint-disable-next-line import/no-unresolved
 
 /**
  * Determine the URL of the Z3 release asset for the given platform and architecture.
