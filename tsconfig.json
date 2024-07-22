@@ -3,12 +3,16 @@
   "compilerOptions": {
     "module": "node16",
     "moduleResolution": "node16",
-    "verbatimModuleSyntax": true,
-    "outDir": "./lib",
+    "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,
     "noImplicitAny": true,
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "baseUrl": "./",
+    "sourceMap": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "newLine": "lf"
   },
   "exclude": ["./dist", "./node_modules", "./__tests__", "./coverage"]
 }
