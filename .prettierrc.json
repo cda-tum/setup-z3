@@ -4,7 +4,12 @@
   "useTabs": false,
   "semi": false,
   "singleQuote": false,
+  "quoteProps": "as-needed",
+  "jsxSingleQuote": false,
   "trailingComma": "none",
-  "bracketSpacing": false,
-  "arrowParens": "avoid"
+  "bracketSpacing": true,
+  "bracketSameLine": true,
+  "arrowParens": "avoid",
+  "htmlWhitespaceSensitivity": "css",
+  "endOfLine": "lf"
 }

@@ -1,55 +1,48 @@
-const process = require("process");
-const exec = require("@actions/exec");
-const path = require("path");
-const { expect, test } = require("@jest/globals");
+import { exec } from "@actions/exec"
+import path from "path"
 
-function executeTest(version = "latest", platform = "host", architecture = "host", addToLibraryPath = "false") {
-  const options = {
-    cwd: path.resolve(__dirname, "../lib"),
-    env: {
-      ...process.env,
-      INPUT_VERSION: version,
-      INPUT_PLATFORM: platform,
-      INPUT_ARCHITECTURE: architecture,
-      INPUT_ADD_TO_LIBRARY_PATH: addToLibraryPath,
-      RUNNER_TEMP: "/tmp",
-      RUNNER_TOOL_CACHE: "/tmp"
+describe("Z3 Setup Tests", () => {
+  const executeTest = async (
+    version = "latest",
+    platform = "host",
+    architecture = "host",
+    addToLibraryPath = "false"
+  ): Promise<number> => {
+    const options = {
+      cwd: path.resolve(__dirname, "../dist"),
+      env: {
+        ...process.env,
+        INPUT_VERSION: version,
+        INPUT_PLATFORM: platform,
+        INPUT_ARCHITECTURE: architecture,
+        INPUT_ADD_TO_LIBRARY_PATH: addToLibraryPath,
+        RUNNER_TEMP: "/tmp",
+        RUNNER_TOOL_CACHE: "/tmp"
+      }
     }
+    return exec("node", ["index.js"], options)
   }
-  return exec.exec("node", ["main.js"], options)
-}
 
-test("linux_latest", async () => {
-  const ret = await executeTest("latest", "linux")
-  expect(ret).toEqual(0)
-})
+  const testCases: {
+    name: string
+    version: string
+    platform?: string
+    architecture?: string
+    addToLibraryPath?: string
+  }[] = [
+    { name: "linux_latest", version: "latest", platform: "linux" },
+    { name: "macOS_latest", version: "latest", platform: "macOS" },
+    { name: "macOS_arm_latest", version: "latest", platform: "macOS", architecture: "arm64" },
+    { name: "windows_latest", version: "latest", platform: "windows", addToLibraryPath: "true" },
+    { name: "specific_version", version: "4.8.17" },
+    { name: "old_version_macOS", version: "4.8.11", platform: "macOS", addToLibraryPath: "true" },
+    { name: "old_version_linux", version: "4.8.10", platform: "linux", addToLibraryPath: "true" }
+  ]
 
-test("macOS_latest", async () => {
-  const ret = await executeTest("latest", "macOS")
-  expect(ret).toEqual(0)
-})
-
-test("macOS_arm_latest", async () => {
-  const ret = await executeTest("latest", "macOS", "arm64")
-  expect(ret).toEqual(0)
-})
-
-test("windows_latest", async () => {
-  const ret = await executeTest("latest", "windows", "host", "true")
-  expect(ret).toEqual(0)
-})
-
-test("specific_version", async () => {
-  const ret = await executeTest("4.8.17")
-  expect(ret).toEqual(0)
-})
-
-test("old_version_macOS", async () => {
-  const ret = await executeTest("4.8.11", "macOS", "host", "true")
-  expect(ret).toEqual(0)
-})
-
-test("old_version_linux", async () => {
-  const ret = await executeTest("4.8.10", "linux", "host", "true")
-  expect(ret).toEqual(0)
+  for (const { name, version, platform, architecture, addToLibraryPath } of testCases) {
+    test(`${name}`, async () => {
+      const ret = await executeTest(version, platform, architecture, addToLibraryPath)
+      expect(ret).toEqual(0)
+    })
+  }
 })

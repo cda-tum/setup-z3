@@ -4071,7 +4071,8 @@ __webpack_unused_export__ = RedirectHandler
 __webpack_unused_export__ = createRedirectInterceptor
 __webpack_unused_export__ = {
   redirect: __nccwpck_require__(277),
-  retry: __nccwpck_require__(4156)
+  retry: __nccwpck_require__(4156),
+  dump: __nccwpck_require__(9124)
 }
 
 __webpack_unused_export__ = buildConnector
@@ -4139,7 +4140,7 @@ module.exports.he = async function fetch (init, options = undefined) {
     return await fetchImpl(init, options)
   } catch (err) {
     if (err && typeof err === 'object') {
-      Error.captureStackTrace(err, this)
+      Error.captureStackTrace(err)
     }
 
     throw err
@@ -5760,7 +5761,7 @@ if (global.FinalizationRegistry && !(process.env.NODE_V8_COVERAGE || process.env
   }
 }
 
-function buildConnector ({ allowH2, maxCachedSessions, socketPath, timeout, ...opts }) {
+function buildConnector ({ allowH2, maxCachedSessions, socketPath, timeout, session: customSession, ...opts }) {
   if (maxCachedSessions != null && (!Number.isInteger(maxCachedSessions) || maxCachedSessions < 0)) {
     throw new InvalidArgumentError('maxCachedSessions must be a positive integer or zero')
   }
@@ -5778,7 +5779,7 @@ function buildConnector ({ allowH2, maxCachedSessions, socketPath, timeout, ...o
       servername = servername || options.servername || util.getServerName(host) || null
 
       const sessionKey = servername || hostname
-      const session = sessionCache.get(sessionKey) || null
+      const session = customSession || sessionCache.get(sessionKey) || null
 
       assert(sessionKey)
 
@@ -6475,7 +6476,8 @@ const {
   isBlobLike,
   buildURL,
   validateHandler,
-  getServerName
+  getServerName,
+  normalizedMethodRecords
 } = __nccwpck_require__(6766)
 const { channels } = __nccwpck_require__(9948)
 const { headerNameLowerCasedRecord } = __nccwpck_require__(1946)
@@ -6510,13 +6512,13 @@ class Request {
       method !== 'CONNECT'
     ) {
       throw new InvalidArgumentError('path must be an absolute URL or start with a slash')
-    } else if (invalidPathRegex.exec(path) !== null) {
+    } else if (invalidPathRegex.test(path)) {
       throw new InvalidArgumentError('invalid request path')
     }
 
     if (typeof method !== 'string') {
       throw new InvalidArgumentError('method must be a string')
-    } else if (!isValidHTTPToken(method)) {
+    } else if (normalizedMethodRecords[method] === undefined && !isValidHTTPToken(method)) {
       throw new InvalidArgumentError('invalid request method')
     }
 
@@ -6868,7 +6870,6 @@ module.exports = {
   kQueue: Symbol('queue'),
   kConnect: Symbol('connect'),
   kConnecting: Symbol('connecting'),
-  kHeadersList: Symbol('headers list'),
   kKeepAliveDefaultTimeout: Symbol('default keep alive timeout'),
   kKeepAliveMaxTimeout: Symbol('max keep alive timeout'),
   kKeepAliveTimeoutThreshold: Symbol('keep alive timeout threshold'),
@@ -6881,6 +6882,7 @@ module.exports = {
   kHost: Symbol('host'),
   kNoRef: Symbol('no ref'),
   kBodyUsed: Symbol('used'),
+  kBody: Symbol('abstracted request body'),
   kRunning: Symbol('running'),
   kBlocking: Symbol('blocking'),
   kPending: Symbol('pending'),
@@ -7094,18 +7096,71 @@ module.exports = {
 
 
 const assert = __nccwpck_require__(8061)
-const { kDestroyed, kBodyUsed, kListeners } = __nccwpck_require__(3734)
+const { kDestroyed, kBodyUsed, kListeners, kBody } = __nccwpck_require__(3734)
 const { IncomingMessage } = __nccwpck_require__(8849)
 const stream = __nccwpck_require__(4492)
 const net = __nccwpck_require__(7503)
-const { InvalidArgumentError } = __nccwpck_require__(9751)
 const { Blob } = __nccwpck_require__(2254)
 const nodeUtil = __nccwpck_require__(7261)
 const { stringify } = __nccwpck_require__(9630)
+const { EventEmitter: EE } = __nccwpck_require__(5673)
+const { InvalidArgumentError } = __nccwpck_require__(9751)
 const { headerNameLowerCasedRecord } = __nccwpck_require__(1946)
 const { tree } = __nccwpck_require__(2288)
 
 const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(v => Number(v))
+
+class BodyAsyncIterable {
+  constructor (body) {
+    this[kBody] = body
+    this[kBodyUsed] = false
+  }
+
+  async * [Symbol.asyncIterator] () {
+    assert(!this[kBodyUsed], 'disturbed')
+    this[kBodyUsed] = true
+    yield * this[kBody]
+  }
+}
+
+function wrapRequestBody (body) {
+  if (isStream(body)) {
+    // TODO (fix): Provide some way for the user to cache the file to e.g. /tmp
+    // so that it can be dispatched again?
+    // TODO (fix): Do we need 100-expect support to provide a way to do this properly?
+    if (bodyLength(body) === 0) {
+      body
+        .on('data', function () {
+          assert(false)
+        })
+    }
+
+    if (typeof body.readableDidRead !== 'boolean') {
+      body[kBodyUsed] = false
+      EE.prototype.on.call(body, 'data', function () {
+        this[kBodyUsed] = true
+      })
+    }
+
+    return body
+  } else if (body && typeof body.pipeTo === 'function') {
+    // TODO (fix): We can't access ReadableStream internal state
+    // to determine whether or not it has been disturbed. This is just
+    // a workaround.
+    return new BodyAsyncIterable(body)
+  } else if (
+    body &&
+    typeof body !== 'string' &&
+    !ArrayBuffer.isView(body) &&
+    isIterable(body)
+  ) {
+    // TODO: Should we allow re-using iterable if !this.opts.idempotent
+    // or through some other flag?
+    return new BodyAsyncIterable(body)
+  } else {
+    return body
+  }
+}
 
 function nop () {}
 
@@ -7685,6 +7740,31 @@ function errorRequest (client, request, err) {
 const kEnumerableProperty = Object.create(null)
 kEnumerableProperty.enumerable = true
 
+const normalizedMethodRecordsBase = {
+  delete: 'DELETE',
+  DELETE: 'DELETE',
+  get: 'GET',
+  GET: 'GET',
+  head: 'HEAD',
+  HEAD: 'HEAD',
+  options: 'OPTIONS',
+  OPTIONS: 'OPTIONS',
+  post: 'POST',
+  POST: 'POST',
+  put: 'PUT',
+  PUT: 'PUT'
+}
+
+const normalizedMethodRecords = {
+  ...normalizedMethodRecordsBase,
+  patch: 'patch',
+  PATCH: 'PATCH'
+}
+
+// Note: object prototypes should not be able to be referenced. e.g. `Object#hasOwnProperty`.
+Object.setPrototypeOf(normalizedMethodRecordsBase, null)
+Object.setPrototypeOf(normalizedMethodRecords, null)
+
 module.exports = {
   kEnumerableProperty,
   nop,
@@ -7723,11 +7803,14 @@ module.exports = {
   isValidHeaderValue,
   isTokenCharCode,
   parseRangeHeader,
+  normalizedMethodRecordsBase,
+  normalizedMethodRecords,
   isValidPort,
   isHttpOrHttpsPrefixed,
   nodeMajor,
   nodeMinor,
-  safeHTTPMethods: ['GET', 'HEAD', 'OPTIONS', 'TRACE']
+  safeHTTPMethods: ['GET', 'HEAD', 'OPTIONS', 'TRACE'],
+  wrapRequestBody
 }
 
 
@@ -9049,19 +9132,19 @@ function writeH1 (client, request) {
 
   /* istanbul ignore else: assertion */
   if (!body || bodyLength === 0) {
-    writeBuffer({ abort, body: null, client, request, socket, contentLength, header, expectsPayload })
+    writeBuffer(abort, null, client, request, socket, contentLength, header, expectsPayload)
   } else if (util.isBuffer(body)) {
-    writeBuffer({ abort, body, client, request, socket, contentLength, header, expectsPayload })
+    writeBuffer(abort, body, client, request, socket, contentLength, header, expectsPayload)
   } else if (util.isBlobLike(body)) {
     if (typeof body.stream === 'function') {
-      writeIterable({ abort, body: body.stream(), client, request, socket, contentLength, header, expectsPayload })
+      writeIterable(abort, body.stream(), client, request, socket, contentLength, header, expectsPayload)
     } else {
-      writeBlob({ abort, body, client, request, socket, contentLength, header, expectsPayload })
+      writeBlob(abort, body, client, request, socket, contentLength, header, expectsPayload)
     }
   } else if (util.isStream(body)) {
-    writeStream({ abort, body, client, request, socket, contentLength, header, expectsPayload })
+    writeStream(abort, body, client, request, socket, contentLength, header, expectsPayload)
   } else if (util.isIterable(body)) {
-    writeIterable({ abort, body, client, request, socket, contentLength, header, expectsPayload })
+    writeIterable(abort, body, client, request, socket, contentLength, header, expectsPayload)
   } else {
     assert(false)
   }
@@ -9069,7 +9152,7 @@ function writeH1 (client, request) {
   return true
 }
 
-function writeStream ({ abort, body, client, request, socket, contentLength, header, expectsPayload }) {
+function writeStream (abort, body, client, request, socket, contentLength, header, expectsPayload) {
   assert(contentLength !== 0 || client[kRunning] === 0, 'stream body cannot be pipelined')
 
   let finished = false
@@ -9172,7 +9255,7 @@ function writeStream ({ abort, body, client, request, socket, contentLength, hea
   }
 }
 
-async function writeBuffer ({ abort, body, client, request, socket, contentLength, header, expectsPayload }) {
+function writeBuffer (abort, body, client, request, socket, contentLength, header, expectsPayload) {
   try {
     if (!body) {
       if (contentLength === 0) {
@@ -9202,7 +9285,7 @@ async function writeBuffer ({ abort, body, client, request, socket, contentLengt
   }
 }
 
-async function writeBlob ({ abort, body, client, request, socket, contentLength, header, expectsPayload }) {
+async function writeBlob (abort, body, client, request, socket, contentLength, header, expectsPayload) {
   assert(contentLength === body.size, 'blob body must have content length')
 
   try {
@@ -9230,7 +9313,7 @@ async function writeBlob ({ abort, body, client, request, socket, contentLength,
   }
 }
 
-async function writeIterable ({ abort, body, client, request, socket, contentLength, header, expectsPayload }) {
+async function writeIterable (abort, body, client, request, socket, contentLength, header, expectsPayload) {
   assert(contentLength !== 0 || client[kRunning] === 0, 'iterator body cannot be pipelined')
 
   let callback = null
@@ -9902,82 +9985,80 @@ function writeH2 (client, request) {
   function writeBodyH2 () {
     /* istanbul ignore else: assertion */
     if (!body || contentLength === 0) {
-      writeBuffer({
+      writeBuffer(
         abort,
+        stream,
+        null,
         client,
         request,
+        client[kSocket],
         contentLength,
-        expectsPayload,
-        h2stream: stream,
-        body: null,
-        socket: client[kSocket]
-      })
+        expectsPayload
+      )
     } else if (util.isBuffer(body)) {
-      writeBuffer({
+      writeBuffer(
         abort,
+        stream,
+        body,
         client,
         request,
+        client[kSocket],
         contentLength,
-        body,
-        expectsPayload,
-        h2stream: stream,
-        socket: client[kSocket]
-      })
+        expectsPayload
+      )
     } else if (util.isBlobLike(body)) {
       if (typeof body.stream === 'function') {
-        writeIterable({
+        writeIterable(
           abort,
+          stream,
+          body.stream(),
           client,
           request,
+          client[kSocket],
           contentLength,
-          expectsPayload,
-          h2stream: stream,
-          body: body.stream(),
-          socket: client[kSocket]
-        })
+          expectsPayload
+        )
       } else {
-        writeBlob({
+        writeBlob(
           abort,
+          stream,
           body,
           client,
           request,
+          client[kSocket],
           contentLength,
-          expectsPayload,
-          h2stream: stream,
-          socket: client[kSocket]
-        })
+          expectsPayload
+        )
       }
     } else if (util.isStream(body)) {
-      writeStream({
+      writeStream(
         abort,
+        client[kSocket],
+        expectsPayload,
+        stream,
         body,
         client,
         request,
-        contentLength,
-        expectsPayload,
-        socket: client[kSocket],
-        h2stream: stream,
-        header: ''
-      })
+        contentLength
+      )
     } else if (util.isIterable(body)) {
-      writeIterable({
+      writeIterable(
         abort,
+        stream,
         body,
         client,
         request,
+        client[kSocket],
         contentLength,
-        expectsPayload,
-        header: '',
-        h2stream: stream,
-        socket: client[kSocket]
-      })
+        expectsPayload
+      )
     } else {
       assert(false)
     }
   }
 }
 
-function writeBuffer ({ abort, h2stream, body, client, request, socket, contentLength, expectsPayload }) {
+function writeBuffer (abort, h2stream, body, client, request, socket, contentLength, expectsPayload) {
   try {
     if (body != null && util.isBuffer(body)) {
       assert(contentLength === body.byteLength, 'buffer body must have content length')
@@ -10000,7 +10081,7 @@ function writeBuffer ({ abort, h2stream, body, client, request, socket, contentL
   }
 }
 
-function writeStream ({ abort, socket, expectsPayload, h2stream, body, client, request, contentLength }) {
+function writeStream (abort, socket, expectsPayload, h2stream, body, client, request, contentLength) {
   assert(contentLength !== 0 || client[kRunning] === 0, 'stream body cannot be pipelined')
 
   // For HTTP/2, is enough to pipe the stream
@@ -10031,7 +10112,7 @@ function writeStream ({ abort, socket, expectsPayload, h2stream, body, client, r
   }
 }
 
-async function writeBlob ({ abort, h2stream, body, client, request, socket, contentLength, expectsPayload }) {
+async function writeBlob (abort, h2stream, body, client, request, socket, contentLength, expectsPayload) {
   assert(contentLength === body.size, 'blob body must have content length')
 
   try {
@@ -10059,7 +10140,7 @@ async function writeBlob ({ abort, h2stream, body, client, request, socket, cont
   }
 }
 
-async function writeIterable ({ abort, h2stream, body, client, request, socket, contentLength, expectsPayload }) {
+async function writeIterable (abort, h2stream, body, client, request, socket, contentLength, expectsPayload) {
   assert(contentLength !== 0 || client[kRunning] === 0, 'iterator body cannot be pipelined')
 
   let callback = null
@@ -12223,7 +12304,12 @@ const assert = __nccwpck_require__(8061)
 
 const { kRetryHandlerDefaultRetry } = __nccwpck_require__(3734)
 const { RequestRetryError } = __nccwpck_require__(9751)
-const { isDisturbed, parseHeaders, parseRangeHeader } = __nccwpck_require__(6766)
+const {
+  isDisturbed,
+  parseHeaders,
+  parseRangeHeader,
+  wrapRequestBody
+} = __nccwpck_require__(6766)
 
 function calculateRetryAfterHeader (retryAfter) {
   const current = Date.now()
@@ -12249,7 +12335,7 @@ class RetryHandler {
 
     this.dispatch = handlers.dispatch
     this.handler = handlers.handler
-    this.opts = dispatchOpts
+    this.opts = { ...dispatchOpts, body: wrapRequestBody(opts.body) }
     this.abort = null
     this.aborted = false
     this.retryOpts = {
@@ -12394,7 +12480,9 @@ class RetryHandler {
         this.abort(
           new RequestRetryError('Request failed', statusCode, {
             headers,
-            count: this.retryCount
+            data: {
+              count: this.retryCount
+            }
           })
         )
         return false
@@ -12415,7 +12503,7 @@ class RetryHandler {
         this.abort(
           new RequestRetryError('Content-Range mismatch', statusCode, {
             headers,
-            count: this.retryCount
+            data: { count: this.retryCount }
           })
         )
         return false
@@ -12426,7 +12514,7 @@ class RetryHandler {
         this.abort(
           new RequestRetryError('ETag mismatch', statusCode, {
             headers,
-            count: this.retryCount
+            data: { count: this.retryCount }
           })
         )
         return false
@@ -12498,7 +12586,7 @@ class RetryHandler {
 
     const err = new RequestRetryError('Request failed', statusCode, {
       headers,
-      count: this.retryCount
+      data: { count: this.retryCount }
     })
 
     this.abort(err)
@@ -12575,6 +12663,136 @@ class RetryHandler {
 }
 
 module.exports = RetryHandler
+
+
+/***/ }),
+
+/***/ 9124:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+
+const util = __nccwpck_require__(6766)
+const { InvalidArgumentError, RequestAbortedError } = __nccwpck_require__(9751)
+const DecoratorHandler = __nccwpck_require__(6533)
+
+class DumpHandler extends DecoratorHandler {
+  #maxSize = 1024 * 1024
+  #abort = null
+  #dumped = false
+  #aborted = false
+  #size = 0
+  #reason = null
+  #handler = null
+
+  constructor ({ maxSize }, handler) {
+    super(handler)
+
+    if (maxSize != null && (!Number.isFinite(maxSize) || maxSize < 1)) {
+      throw new InvalidArgumentError('maxSize must be a number greater than 0')
+    }
+
+    this.#maxSize = maxSize ?? this.#maxSize
+    this.#handler = handler
+  }
+
+  onConnect (abort) {
+    this.#abort = abort
+
+    this.#handler.onConnect(this.#customAbort.bind(this))
+  }
+
+  #customAbort (reason) {
+    this.#aborted = true
+    this.#reason = reason
+  }
+
+  // TODO: will require adjustment after new hooks are out
+  onHeaders (statusCode, rawHeaders, resume, statusMessage) {
+    const headers = util.parseHeaders(rawHeaders)
+    const contentLength = headers['content-length']
+
+    if (contentLength != null && contentLength > this.#maxSize) {
+      throw new RequestAbortedError(
+        `Response size (${contentLength}) larger than maxSize (${
+          this.#maxSize
+        })`
+      )
+    }
+
+    if (this.#aborted) {
+      return true
+    }
+
+    return this.#handler.onHeaders(
+      statusCode,
+      rawHeaders,
+      resume,
+      statusMessage
+    )
+  }
+
+  onError (err) {
+    if (this.#dumped) {
+      return
+    }
+
+    err = this.#reason ?? err
+
+    this.#handler.onError(err)
+  }
+
+  onData (chunk) {
+    this.#size = this.#size + chunk.length
+
+    if (this.#size >= this.#maxSize) {
+      this.#dumped = true
+
+      if (this.#aborted) {
+        this.#handler.onError(this.#reason)
+      } else {
+        this.#handler.onComplete([])
+      }
+    }
+
+    return true
+  }
+
+  onComplete (trailers) {
+    if (this.#dumped) {
+      return
+    }
+
+    if (this.#aborted) {
+      this.#handler.onError(this.reason)
+      return
+    }
+
+    this.#handler.onComplete(trailers)
+  }
+}
+
+function createDumpInterceptor (
+  { maxSize: defaultMaxSize } = {
+    maxSize: 1024 * 1024
+  }
+) {
+  return dispatch => {
+    return function Intercept (opts, handler) {
+      const { dumpMaxSize = defaultMaxSize } =
+        opts
+
+      const dumpHandler = new DumpHandler(
+        { maxSize: dumpMaxSize },
+        handler
+      )
+
+      return dispatch(opts, dumpHandler)
+    }
+  }
+}
+
+module.exports = createDumpInterceptor
 
 
 /***/ }),
@@ -15233,7 +15451,7 @@ module.exports = {
 
 
 const { parseSetCookie } = __nccwpck_require__(645)
-const { stringify, getHeadersList } = __nccwpck_require__(5571)
+const { stringify } = __nccwpck_require__(5571)
 const { webidl } = __nccwpck_require__(4867)
 const { Headers } = __nccwpck_require__(2721)
 
@@ -15310,14 +15528,13 @@ function getSetCookies (headers) {
 
   webidl.brandCheck(headers, Headers, { strict: false })
 
-  const cookies = getHeadersList(headers).cookies
+  const cookies = headers.getSetCookie()
 
   if (!cookies) {
     return []
   }
 
-  // In older versions of undici, cookies is a list of name:value.
-  return cookies.map((pair) => parseSetCookie(Array.isArray(pair) ? pair[1] : pair))
+  return cookies.map((pair) => parseSetCookie(pair))
 }
 
 /**
@@ -15744,12 +15961,9 @@ module.exports = {
 /***/ }),
 
 /***/ 5571:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+/***/ ((module) => {
 
 
-
-const assert = __nccwpck_require__(8061)
-const { kHeadersList } = __nccwpck_require__(3734)
 
 /**
  * @param {string} value
@@ -16023,35 +16237,13 @@ function stringify (cookie) {
   return out.join('; ')
 }
 
-let kHeadersListNode
-
-function getHeadersList (headers) {
-  if (headers[kHeadersList]) {
-    return headers[kHeadersList]
-  }
-
-  if (!kHeadersListNode) {
-    kHeadersListNode = Object.getOwnPropertySymbols(headers).find(
-      (symbol) => symbol.description === 'headers list'
-    )
-
-    assert(kHeadersListNode, 'Headers cannot be parsed')
-  }
-
-  const headersList = headers[kHeadersListNode]
-  assert(headersList)
-
-  return headersList
-}
-
 module.exports = {
   isCTLExcludingHtab,
   validateCookieName,
   validateCookiePath,
   validateCookieValue,
   toIMFDate,
-  stringify,
-  getHeadersList
+  stringify
 }
 
 
@@ -17305,7 +17497,7 @@ function bodyMixinMethods (instance) {
         // Return a Blob whose contents are bytes and type attribute
         // is mimeType.
         return new Blob([bytes], { type: mimeType })
-      }, instance, false)
+      }, instance)
     },
 
     arrayBuffer () {
@@ -17314,21 +17506,20 @@ function bodyMixinMethods (instance) {
       // given a byte sequence bytes: return a new ArrayBuffer
       // whose contents are bytes.
       return consumeBody(this, (bytes) => {
-        // Note: arrayBuffer already cloned.
-        return bytes.buffer
-      }, instance, true)
+        return new Uint8Array(bytes).buffer
+      }, instance)
     },
 
     text () {
       // The text() method steps are to return the result of running
       // consume body with this and UTF-8 decode.
-      return consumeBody(this, utf8DecodeBytes, instance, false)
+      return consumeBody(this, utf8DecodeBytes, instance)
     },
 
     json () {
       // The json() method steps are to return the result of running
       // consume body with this and parse JSON from bytes.
-      return consumeBody(this, parseJSONFromBytes, instance, false)
+      return consumeBody(this, parseJSONFromBytes, instance)
     },
 
     formData () {
@@ -17380,7 +17571,16 @@ function bodyMixinMethods (instance) {
         throw new TypeError(
           'Content-Type was not one of "multipart/form-data" or "application/x-www-form-urlencoded".'
         )
-      }, instance, false)
+      }, instance)
+    },
+
+    bytes () {
+      // The bytes() method steps are to return the result of running consume body
+      // with this and the following step given a byte sequence bytes: return the
+      // result of creating a Uint8Array from bytes in this’s relevant realm.
+      return consumeBody(this, (bytes) => {
+        return new Uint8Array(bytes)
+      }, instance)
     }
   }
 
@@ -17396,9 +17596,8 @@ function mixinBody (prototype) {
  * @param {Response|Request} object
  * @param {(value: unknown) => unknown} convertBytesToJSValue
  * @param {Response|Request} instance
- * @param {boolean} [shouldClone]
  */
-async function consumeBody (object, convertBytesToJSValue, instance, shouldClone) {
+async function consumeBody (object, convertBytesToJSValue, instance) {
   webidl.brandCheck(object, instance)
 
   // 1. If object is unusable, then return a promise rejected
@@ -17436,7 +17635,7 @@ async function consumeBody (object, convertBytesToJSValue, instance, shouldClone
 
   // 6. Otherwise, fully read object’s body given successSteps,
   //    errorSteps, and object’s relevant global object.
-  await fullyReadBody(object[kState].body, successSteps, errorSteps, shouldClone)
+  await fullyReadBody(object[kState].body, successSteps, errorSteps)
 
   // 7. Return promise.
   return promise.promise
@@ -18355,6 +18554,7 @@ module.exports = {
   collectAnHTTPQuotedString,
   serializeAMimeType,
   removeChars,
+  removeHTTPWhitespace,
   minimizeSupportedMimeType,
   HTTP_TOKEN_CODEPOINTS,
   isomorphicDecode
@@ -19331,8 +19531,7 @@ module.exports = {
 
 
 
-const { kHeadersList, kConstruct } = __nccwpck_require__(3734)
-const { kGuard } = __nccwpck_require__(7371)
+const { kConstruct } = __nccwpck_require__(3734)
 const { kEnumerableProperty } = __nccwpck_require__(6766)
 const {
   iteratorMixin,
@@ -19432,19 +19631,18 @@ function appendHeader (headers, name, value) {
   // 3. If headers’s guard is "immutable", then throw a TypeError.
   // 4. Otherwise, if headers’s guard is "request" and name is a
   //    forbidden header name, return.
+  // 5. Otherwise, if headers’s guard is "request-no-cors":
+  //    TODO
   // Note: undici does not implement forbidden header names
-  if (headers[kGuard] === 'immutable') {
+  if (getHeadersGuard(headers) === 'immutable') {
     throw new TypeError('immutable')
-  } else if (headers[kGuard] === 'request-no-cors') {
-    // 5. Otherwise, if headers’s guard is "request-no-cors":
-    // TODO
   }
 
   // 6. Otherwise, if headers’s guard is "response" and name is a
   //    forbidden response-header name, return.
 
   // 7. Append (name, value) to headers’s header list.
-  return headers[kHeadersList].append(name, value, false)
+  return getHeadersList(headers).append(name, value, false)
 
   // 8. If headers’s guard is "request-no-cors", then remove
   //    privileged no-CORS request headers from headers
@@ -19686,16 +19884,20 @@ class HeadersList {
 
 // https://fetch.spec.whatwg.org/#headers-class
 class Headers {
+  #guard
+  #headersList
+
   constructor (init = undefined) {
     if (init === kConstruct) {
       return
     }
-    this[kHeadersList] = new HeadersList()
+
+    this.#headersList = new HeadersList()
 
     // The new Headers(init) constructor steps are:
 
     // 1. Set this’s guard to "none".
-    this[kGuard] = 'none'
+    this.#guard = 'none'
 
     // 2. If init is given, then fill this with init.
     if (init !== undefined) {
@@ -19745,22 +19947,20 @@ class Headers {
     // 5. Otherwise, if this’s guard is "response" and name is
     //    a forbidden response-header name, return.
     // Note: undici does not implement forbidden header names
-    if (this[kGuard] === 'immutable') {
+    if (this.#guard === 'immutable') {
       throw new TypeError('immutable')
-    } else if (this[kGuard] === 'request-no-cors') {
-      // TODO
     }
 
     // 6. If this’s header list does not contain name, then
     //    return.
-    if (!this[kHeadersList].contains(name, false)) {
+    if (!this.#headersList.contains(name, false)) {
       return
     }
 
     // 7. Delete name from this’s header list.
     // 8. If this’s guard is "request-no-cors", then remove
     //    privileged no-CORS request headers from this.
-    this[kHeadersList].delete(name, false)
+    this.#headersList.delete(name, false)
   }
 
   // https://fetch.spec.whatwg.org/#dom-headers-get
@@ -19783,7 +19983,7 @@ class Headers {
 
     // 2. Return the result of getting name from this’s header
     //    list.
-    return this[kHeadersList].get(name, false)
+    return this.#headersList.get(name, false)
   }
 
   // https://fetch.spec.whatwg.org/#dom-headers-has
@@ -19806,7 +20006,7 @@ class Headers {
 
     // 2. Return true if this’s header list contains name;
     //    otherwise false.
-    return this[kHeadersList].contains(name, false)
+    return this.#headersList.contains(name, false)
   }
 
   // https://fetch.spec.whatwg.org/#dom-headers-set
@@ -19847,16 +20047,14 @@ class Headers {
     // 6. Otherwise, if this’s guard is "response" and name is a
     //    forbidden response-header name, return.
     // Note: undici does not implement forbidden header names
-    if (this[kGuard] === 'immutable') {
+    if (this.#guard === 'immutable') {
       throw new TypeError('immutable')
-    } else if (this[kGuard] === 'request-no-cors') {
-      // TODO
     }
 
     // 7. Set (name, value) in this’s header list.
     // 8. If this’s guard is "request-no-cors", then remove
     //    privileged no-CORS request headers from this
-    this[kHeadersList].set(name, value, false)
+    this.#headersList.set(name, value, false)
   }
 
   // https://fetch.spec.whatwg.org/#dom-headers-getsetcookie
@@ -19867,7 +20065,7 @@ class Headers {
     // 2. Return the values of all headers in this’s header list whose name is
     //    a byte-case-insensitive match for `Set-Cookie`, in order.
 
-    const list = this[kHeadersList].cookies
+    const list = this.#headersList.cookies
 
     if (list) {
       return [...list]
@@ -19878,8 +20076,8 @@ class Headers {
 
   // https://fetch.spec.whatwg.org/#concept-header-list-sort-and-combine
   get [kHeadersSortedMap] () {
-    if (this[kHeadersList][kHeadersSortedMap]) {
-      return this[kHeadersList][kHeadersSortedMap]
+    if (this.#headersList[kHeadersSortedMap]) {
+      return this.#headersList[kHeadersSortedMap]
     }
 
     // 1. Let headers be an empty list of headers with the key being the name
@@ -19888,14 +20086,14 @@ class Headers {
 
     // 2. Let names be the result of convert header names to a sorted-lowercase
     //    set with all the names of the headers in list.
-    const names = this[kHeadersList].toSortedArray()
+    const names = this.#headersList.toSortedArray()
 
-    const cookies = this[kHeadersList].cookies
+    const cookies = this.#headersList.cookies
 
     // fast-path
     if (cookies === null || cookies.length === 1) {
       // Note: The non-null assertion of value has already been done by `HeadersList#toSortedArray`
-      return (this[kHeadersList][kHeadersSortedMap] = names)
+      return (this.#headersList[kHeadersSortedMap] = names)
     }
 
     // 3. For each name of names:
@@ -19925,19 +20123,37 @@ class Headers {
     }
 
     // 4. Return headers.
-    return (this[kHeadersList][kHeadersSortedMap] = headers)
+    return (this.#headersList[kHeadersSortedMap] = headers)
   }
 
   [util.inspect.custom] (depth, options) {
     options.depth ??= depth
 
-    return `Headers ${util.formatWithOptions(options, this[kHeadersList].entries)}`
+    return `Headers ${util.formatWithOptions(options, this.#headersList.entries)}`
+  }
+
+  static getHeadersGuard (o) {
+    return o.#guard
+  }
+
+  static setHeadersGuard (o, guard) {
+    o.#guard = guard
+  }
+
+  static getHeadersList (o) {
+    return o.#headersList
+  }
+
+  static setHeadersList (o, list) {
+    o.#headersList = list
   }
 }
 
-Object.defineProperty(Headers.prototype, util.inspect.custom, {
-  enumerable: false
-})
+const { getHeadersGuard, setHeadersGuard, getHeadersList, setHeadersList } = Headers
+Reflect.deleteProperty(Headers, 'getHeadersGuard')
+Reflect.deleteProperty(Headers, 'setHeadersGuard')
+Reflect.deleteProperty(Headers, 'getHeadersList')
+Reflect.deleteProperty(Headers, 'setHeadersList')
 
 iteratorMixin('Headers', Headers, kHeadersSortedMap, 0, 1)
 
@@ -19951,6 +20167,9 @@ Object.defineProperties(Headers.prototype, {
   [Symbol.toStringTag]: {
     value: 'Headers',
     configurable: true
+  },
+  [util.inspect.custom]: {
+    enumerable: false
   }
 })
 
@@ -19960,8 +20179,12 @@ webidl.converters.HeadersInit = function (V, prefix, argument) {
 
     // A work-around to ensure we send the properly-cased Headers when V is a Headers object.
     // Read https://github.com/nodejs/undici/pull/3159#issuecomment-2075537226 before touching, please.
-    if (!util.types.isProxy(V) && kHeadersList in V && iterator === Headers.prototype.entries) { // Headers object
-      return V[kHeadersList].entriesList
+    if (!util.types.isProxy(V) && iterator === Headers.prototype.entries) { // Headers object
+      try {
+        return getHeadersList(V).entriesList
+      } catch {
+        // fall-through
+      }
     }
 
     if (typeof iterator === 'function') {
@@ -19983,7 +20206,11 @@ module.exports = {
   // for test.
   compareHeaderName,
   Headers,
-  HeadersList
+  HeadersList,
+  getHeadersGuard,
+  setHeadersGuard,
+  setHeadersList,
+  getHeadersList
 }
 
 
@@ -22258,16 +22485,14 @@ module.exports = {
 
 
 const { extractBody, mixinBody, cloneBody } = __nccwpck_require__(868)
-const { Headers, fill: fillHeaders, HeadersList } = __nccwpck_require__(2721)
+const { Headers, fill: fillHeaders, HeadersList, setHeadersGuard, getHeadersGuard, setHeadersList, getHeadersList } = __nccwpck_require__(2721)
 const { FinalizationRegistry } = __nccwpck_require__(1237)()
 const util = __nccwpck_require__(6766)
 const nodeUtil = __nccwpck_require__(7261)
 const {
   isValidHTTPToken,
   sameOrigin,
-  normalizeMethod,
-  environmentSettingsObject,
-  normalizeMethodRecord
+  environmentSettingsObject
 } = __nccwpck_require__(9665)
 const {
   forbiddenMethodsSet,
@@ -22279,11 +22504,11 @@ const {
   requestCache,
   requestDuplex
 } = __nccwpck_require__(5585)
-const { kEnumerableProperty } = util
-const { kHeaders, kSignal, kState, kGuard, kDispatcher } = __nccwpck_require__(7371)
+const { kEnumerableProperty, normalizedMethodRecordsBase, normalizedMethodRecords } = util
+const { kHeaders, kSignal, kState, kDispatcher } = __nccwpck_require__(7371)
 const { webidl } = __nccwpck_require__(4867)
 const { URLSerializer } = __nccwpck_require__(1423)
-const { kHeadersList, kConstruct } = __nccwpck_require__(3734)
+const { kConstruct } = __nccwpck_require__(3734)
 const assert = __nccwpck_require__(8061)
 const { getMaxListeners, setMaxListeners, getEventListeners, defaultMaxListeners } = __nccwpck_require__(5673)
 
@@ -22604,7 +22829,7 @@ class Request {
       // 1. Let method be init["method"].
       let method = init.method
 
-      const mayBeNormalized = normalizeMethodRecord[method]
+      const mayBeNormalized = normalizedMethodRecords[method]
 
       if (mayBeNormalized !== undefined) {
         // Note: Bypass validation DELETE, GET, HEAD, OPTIONS, POST, PUT, PATCH and these lowercase ones
@@ -22616,12 +22841,16 @@ class Request {
           throw new TypeError(`'${method}' is not a valid HTTP method.`)
         }
 
-        if (forbiddenMethodsSet.has(method.toUpperCase())) {
+        const upperCase = method.toUpperCase()
+
+        if (forbiddenMethodsSet.has(upperCase)) {
           throw new TypeError(`'${method}' HTTP method is unsupported.`)
         }
 
         // 3. Normalize method.
-        method = normalizeMethod(method)
+        // https://fetch.spec.whatwg.org/#concept-method-normalize
+        // Note: must be in uppercase
+        method = normalizedMethodRecordsBase[upperCase] ?? method
 
         // 4. Set request’s method to method.
         request.method = method
@@ -22700,8 +22929,8 @@ class Request {
     // Realm, whose header list is request’s header list and guard is
     // "request".
     this[kHeaders] = new Headers(kConstruct)
-    this[kHeaders][kHeadersList] = request.headersList
-    this[kHeaders][kGuard] = 'request'
+    setHeadersList(this[kHeaders], request.headersList)
+    setHeadersGuard(this[kHeaders], 'request')
 
     // 31. If this’s request’s mode is "no-cors", then:
     if (mode === 'no-cors') {
@@ -22714,13 +22943,13 @@ class Request {
       }
 
       // 2. Set this’s headers’s guard to "request-no-cors".
-      this[kHeaders][kGuard] = 'request-no-cors'
+      setHeadersGuard(this[kHeaders], 'request-no-cors')
     }
 
     // 32. If init is not empty, then:
     if (initHasKey) {
       /** @type {HeadersList} */
-      const headersList = this[kHeaders][kHeadersList]
+      const headersList = getHeadersList(this[kHeaders])
       // 1. Let headers be a copy of this’s headers and its associated header
       // list.
       // 2. If init["headers"] exists, then set headers to init["headers"].
@@ -22774,7 +23003,7 @@ class Request {
       // 3, If Content-Type is non-null and this’s headers’s header list does
       // not contain `Content-Type`, then append `Content-Type`/Content-Type to
       // this’s headers.
-      if (contentType && !this[kHeaders][kHeadersList].contains('content-type', true)) {
+      if (contentType && !getHeadersList(this[kHeaders]).contains('content-type', true)) {
         this[kHeaders].append('content-type', contentType)
       }
     }
@@ -23040,7 +23269,7 @@ class Request {
     }
 
     // 4. Return clonedRequestObject.
-    return fromInnerRequest(clonedRequest, ac.signal, this[kHeaders][kGuard])
+    return fromInnerRequest(clonedRequest, ac.signal, getHeadersGuard(this[kHeaders]))
   }
 
   [nodeUtil.inspect.custom] (depth, options) {
@@ -23149,8 +23378,8 @@ function fromInnerRequest (innerRequest, signal, guard) {
   request[kState] = innerRequest
   request[kSignal] = signal
   request[kHeaders] = new Headers(kConstruct)
-  request[kHeaders][kHeadersList] = innerRequest.headersList
-  request[kHeaders][kGuard] = guard
+  setHeadersList(request[kHeaders], innerRequest.headersList)
+  setHeadersGuard(request[kHeaders], guard)
   return request
 }
 
@@ -23296,7 +23525,7 @@ module.exports = { Request, makeRequest, fromInnerRequest, cloneRequest }
 
 
 
-const { Headers, HeadersList, fill } = __nccwpck_require__(2721)
+const { Headers, HeadersList, fill, getHeadersGuard, setHeadersGuard, setHeadersList } = __nccwpck_require__(2721)
 const { extractBody, cloneBody, mixinBody } = __nccwpck_require__(868)
 const util = __nccwpck_require__(6766)
 const nodeUtil = __nccwpck_require__(7261)
@@ -23315,11 +23544,11 @@ const {
   redirectStatusSet,
   nullBodyStatus
 } = __nccwpck_require__(5585)
-const { kState, kHeaders, kGuard } = __nccwpck_require__(7371)
+const { kState, kHeaders } = __nccwpck_require__(7371)
 const { webidl } = __nccwpck_require__(4867)
 const { FormData } = __nccwpck_require__(8931)
 const { URLSerializer } = __nccwpck_require__(1423)
-const { kHeadersList, kConstruct } = __nccwpck_require__(3734)
+const { kConstruct } = __nccwpck_require__(3734)
 const assert = __nccwpck_require__(8061)
 const { types } = __nccwpck_require__(7261)
 const { isDisturbed, isErrored } = __nccwpck_require__(4492)
@@ -23437,8 +23666,8 @@ class Response {
     // Realm, whose header list is this’s response’s header list and guard
     // is "response".
     this[kHeaders] = new Headers(kConstruct)
-    this[kHeaders][kGuard] = 'response'
-    this[kHeaders][kHeadersList] = this[kState].headersList
+    setHeadersGuard(this[kHeaders], 'response')
+    setHeadersList(this[kHeaders], this[kState].headersList)
 
     // 3. Let bodyWithType be null.
     let bodyWithType = null
@@ -23551,7 +23780,7 @@ class Response {
 
     // 3. Return the result of creating a Response object, given
     // clonedResponse, this’s headers’s guard, and this’s relevant Realm.
-    return fromInnerResponse(clonedResponse, this[kHeaders][kGuard])
+    return fromInnerResponse(clonedResponse, getHeadersGuard(this[kHeaders]))
   }
 
   [nodeUtil.inspect.custom] (depth, options) {
@@ -23818,8 +24047,8 @@ function fromInnerResponse (innerResponse, guard) {
   const response = new Response(kConstruct)
   response[kState] = innerResponse
   response[kHeaders] = new Headers(kConstruct)
-  response[kHeaders][kHeadersList] = innerResponse.headersList
-  response[kHeaders][kGuard] = guard
+  setHeadersList(response[kHeaders], innerResponse.headersList)
+  setHeadersGuard(response[kHeaders], guard)
 
   if (hasFinalizationRegistry && innerResponse.body?.stream) {
     registry.register(response, innerResponse.body.stream)
@@ -23921,7 +24150,6 @@ module.exports = {
   kHeaders: Symbol('headers'),
   kSignal: Symbol('signal'),
   kState: Symbol('state'),
-  kGuard: Symbol('guard'),
   kDispatcher: Symbol('dispatcher')
 }
 
@@ -23939,7 +24167,7 @@ const { redirectStatusSet, referrerPolicySet: referrerPolicyTokens, badPortsSet 
 const { getGlobalOrigin } = __nccwpck_require__(8877)
 const { collectASequenceOfCodePoints, collectAnHTTPQuotedString, removeChars, parseMIMEType } = __nccwpck_require__(1423)
 const { performance } = __nccwpck_require__(8846)
-const { isBlobLike, ReadableStreamFrom, isValidHTTPToken } = __nccwpck_require__(6766)
+const { isBlobLike, ReadableStreamFrom, isValidHTTPToken, normalizedMethodRecordsBase } = __nccwpck_require__(6766)
 const assert = __nccwpck_require__(8061)
 const { isUint8Array } = __nccwpck_require__(3746)
 const { webidl } = __nccwpck_require__(4867)
@@ -24193,10 +24421,13 @@ function appendRequestOriginHeader (request) {
   // TODO: implement "byte-serializing a request origin"
   let serializedOrigin = request.origin
 
-  // "'client' is changed to an origin during fetching."
-  // This doesn't happen in undici (in most cases) because undici, by default,
-  // has no concept of origin.
-  if (serializedOrigin === 'client') {
+  // - "'client' is changed to an origin during fetching."
+  //   This doesn't happen in undici (in most cases) because undici, by default,
+  //   has no concept of origin.
+  // - request.origin can also be set to request.client.origin (client being
+  //   an environment settings object), which is undefined without using
+  //   setGlobalOrigin.
+  if (serializedOrigin === 'client' || serializedOrigin === undefined) {
     return
   }
 
@@ -24724,37 +24955,12 @@ function isCancelled (fetchParams) {
     fetchParams.controller.state === 'terminated'
 }
 
-const normalizeMethodRecordBase = {
-  delete: 'DELETE',
-  DELETE: 'DELETE',
-  get: 'GET',
-  GET: 'GET',
-  head: 'HEAD',
-  HEAD: 'HEAD',
-  options: 'OPTIONS',
-  OPTIONS: 'OPTIONS',
-  post: 'POST',
-  POST: 'POST',
-  put: 'PUT',
-  PUT: 'PUT'
-}
-
-const normalizeMethodRecord = {
-  ...normalizeMethodRecordBase,
-  patch: 'patch',
-  PATCH: 'PATCH'
-}
-
-// Note: object prototypes should not be able to be referenced. e.g. `Object#hasOwnProperty`.
-Object.setPrototypeOf(normalizeMethodRecordBase, null)
-Object.setPrototypeOf(normalizeMethodRecord, null)
-
 /**
  * @see https://fetch.spec.whatwg.org/#concept-method-normalize
  * @param {string} method
  */
 function normalizeMethod (method) {
-  return normalizeMethodRecordBase[method.toLowerCase()] ?? method
+  return normalizedMethodRecordsBase[method.toLowerCase()] ?? method
 }
 
 // https://infra.spec.whatwg.org/#serialize-a-javascript-value-to-a-json-string
@@ -24984,7 +25190,7 @@ function iteratorMixin (name, object, kInternalIterator, keyIndex = 0, valueInde
 /**
  * @see https://fetch.spec.whatwg.org/#body-fully-read
  */
-async function fullyReadBody (body, processBody, processBodyError, shouldClone) {
+async function fullyReadBody (body, processBody, processBodyError) {
   // 1. If taskDestination is null, then set taskDestination to
   //    the result of starting a new parallel queue.
 
@@ -25010,7 +25216,7 @@ async function fullyReadBody (body, processBody, processBodyError, shouldClone) 
 
   // 5. Read all bytes from reader, given successSteps and errorSteps.
   try {
-    successSteps(await readAllBytes(reader, shouldClone))
+    successSteps(await readAllBytes(reader))
   } catch (e) {
     errorSteps(e)
   }
@@ -25058,9 +25264,8 @@ function isomorphicEncode (input) {
  * @see https://streams.spec.whatwg.org/#readablestreamdefaultreader-read-all-bytes
  * @see https://streams.spec.whatwg.org/#read-loop
  * @param {ReadableStreamDefaultReader} reader
- * @param {boolean} [shouldClone]
  */
-async function readAllBytes (reader, shouldClone) {
+async function readAllBytes (reader) {
   const bytes = []
   let byteLength = 0
 
@@ -25069,13 +25274,6 @@ async function readAllBytes (reader, shouldClone) {
 
     if (done) {
       // 1. Call successSteps with bytes.
-      if (bytes.length === 1) {
-        const { buffer, byteOffset, byteLength } = bytes[0]
-        if (shouldClone === false) {
-          return Buffer.from(buffer, byteOffset, byteLength)
-        }
-        return Buffer.from(buffer.slice(byteOffset, byteOffset + byteLength), 0, byteLength)
-      }
       return Buffer.concat(bytes, byteLength)
     }
 
@@ -25572,7 +25770,6 @@ module.exports = {
   urlHasHttpsScheme,
   urlIsHttpHttpsScheme,
   readAllBytes,
-  normalizeMethodRecord,
   simpleRangeHeaderValue,
   buildContentRange,
   parseMetadata,
@@ -27447,14 +27644,13 @@ const {
   kReceivedClose,
   kResponse
 } = __nccwpck_require__(8933)
-const { fireEvent, failWebsocketConnection, isClosing, isClosed, isEstablished } = __nccwpck_require__(4720)
+const { fireEvent, failWebsocketConnection, isClosing, isClosed, isEstablished, parseExtensions } = __nccwpck_require__(4720)
 const { channels } = __nccwpck_require__(9948)
 const { CloseEvent } = __nccwpck_require__(7864)
 const { makeRequest } = __nccwpck_require__(4342)
 const { fetching } = __nccwpck_require__(5857)
-const { Headers } = __nccwpck_require__(2721)
+const { Headers, getHeadersList } = __nccwpck_require__(2721)
 const { getDecodeSplit } = __nccwpck_require__(9665)
-const { kHeadersList } = __nccwpck_require__(3734)
 const { WebsocketFrameSend } = __nccwpck_require__(7257)
 
 /** @type {import('crypto')} */
@@ -27471,7 +27667,7 @@ try {
  * @param {URL} url
  * @param {string|string[]} protocols
  * @param {import('./websocket').WebSocket} ws
- * @param {(response: any) => void} onEstablish
+ * @param {(response: any, extensions: string[] | undefined) => void} onEstablish
  * @param {Partial<import('../../types/websocket').WebSocketInit>} options
  */
 function establishWebSocketConnection (url, protocols, client, ws, onEstablish, options) {
@@ -27498,7 +27694,7 @@ function establishWebSocketConnection (url, protocols, client, ws, onEstablish, 
 
   // Note: undici extension, allow setting custom headers.
   if (options.headers) {
-    const headersList = new Headers(options.headers)[kHeadersList]
+    const headersList = getHeadersList(new Headers(options.headers))
 
     request.headersList = headersList
   }
@@ -27531,12 +27727,11 @@ function establishWebSocketConnection (url, protocols, client, ws, onEstablish, 
   // 9. Let permessageDeflate be a user-agent defined
   //    "permessage-deflate" extension header value.
   // https://github.com/mozilla/gecko-dev/blob/ce78234f5e653a5d3916813ff990f053510227bc/netwerk/protocol/websocket/WebSocketChannel.cpp#L2673
-  // TODO: enable once permessage-deflate is supported
-  const permessageDeflate = '' // 'permessage-deflate; 15'
+  const permessageDeflate = 'permessage-deflate; client_max_window_bits'
 
   // 10. Append (`Sec-WebSocket-Extensions`, permessageDeflate) to
   //     request’s header list.
-  // request.headersList.append('sec-websocket-extensions', permessageDeflate)
+  request.headersList.append('sec-websocket-extensions', permessageDeflate)
 
   // 11. Fetch request with useParallelQueue set to true, and
   //     processResponse given response being these steps:
@@ -27607,10 +27802,15 @@ function establishWebSocketConnection (url, protocols, client, ws, onEstablish, 
       //    header field to determine which extensions are requested is
       //    discussed in Section 9.1.)
       const secExtension = response.headersList.get('Sec-WebSocket-Extensions')
+      let extensions
 
-      if (secExtension !== null && secExtension !== permessageDeflate) {
-        failWebsocketConnection(ws, 'Received different permessage-deflate than the one set.')
-        return
+      if (secExtension !== null) {
+        extensions = parseExtensions(secExtension)
+
+        if (!extensions.has('permessage-deflate')) {
+          failWebsocketConnection(ws, 'Sec-WebSocket-Extensions header does not match.')
+          return
+        }
       }
 
       // 6. If the response includes a |Sec-WebSocket-Protocol| header field
@@ -27646,7 +27846,7 @@ function establishWebSocketConnection (url, protocols, client, ws, onEstablish, 
         })
       }
 
-      onEstablish(response)
+      onEstablish(response, extensions)
     }
   })
 
@@ -27700,13 +27900,9 @@ function closeWebSocketConnection (ws, code, reason, reasonByteLength) {
     /** @type {import('stream').Duplex} */
     const socket = ws[kResponse].socket
 
-    socket.write(frame.createFrame(opcodes.CLOSE), (err) => {
-      if (!err) {
-        ws[kSentClose] = sentCloseFrameState.SENT
-      }
-    })
+    socket.write(frame.createFrame(opcodes.CLOSE))
 
-    ws[kSentClose] = sentCloseFrameState.PROCESSING
+    ws[kSentClose] = sentCloseFrameState.SENT
 
     // Upon either sending or receiving a Close control frame, it is said
     // that _The WebSocket Closing Handshake is Started_ and that the
@@ -27734,6 +27930,11 @@ function onSocketData (chunk) {
  */
 function onSocketClose () {
   const { ws } = this
+  const { [kResponse]: response } = ws
+
+  response.socket.off('data', onSocketData)
+  response.socket.off('close', onSocketClose)
+  response.socket.off('error', onSocketError)
 
   // If the TCP connection was closed after the
   // WebSocket closing handshake was completed, the WebSocket connection
@@ -27859,6 +28060,13 @@ const parserStates = {
 
 const emptyBuffer = Buffer.allocUnsafe(0)
 
+const sendHints = {
+  string: 1,
+  typedArray: 2,
+  arrayBuffer: 3,
+  blob: 4
+}
+
 module.exports = {
   uid,
   sentCloseFrameState,
@@ -27867,7 +28075,8 @@ module.exports = {
   opcodes,
   maxUnsigned16Bit,
   parserStates,
-  emptyBuffer
+  emptyBuffer,
+  sendHints
 }
 
 
@@ -28308,18 +28517,106 @@ module.exports = {
 
 /***/ }),
 
+/***/ 4845:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+
+const { createInflateRaw, Z_DEFAULT_WINDOWBITS } = __nccwpck_require__(5628)
+const { isValidClientWindowBits } = __nccwpck_require__(4720)
+
+const tail = Buffer.from([0x00, 0x00, 0xff, 0xff])
+const kBuffer = Symbol('kBuffer')
+const kLength = Symbol('kLength')
+
+class PerMessageDeflate {
+  /** @type {import('node:zlib').InflateRaw} */
+  #inflate
+
+  #options = {}
+
+  constructor (extensions) {
+    this.#options.serverNoContextTakeover = extensions.has('server_no_context_takeover')
+    this.#options.serverMaxWindowBits = extensions.get('server_max_window_bits')
+  }
+
+  decompress (chunk, fin, callback) {
+    // An endpoint uses the following algorithm to decompress a message.
+    // 1.  Append 4 octets of 0x00 0x00 0xff 0xff to the tail end of the
+    //     payload of the message.
+    // 2.  Decompress the resulting data using DEFLATE.
+
+    if (!this.#inflate) {
+      let windowBits = Z_DEFAULT_WINDOWBITS
+
+      if (this.#options.serverMaxWindowBits) { // empty values default to Z_DEFAULT_WINDOWBITS
+        if (!isValidClientWindowBits(this.#options.serverMaxWindowBits)) {
+          callback(new Error('Invalid server_max_window_bits'))
+          return
+        }
+
+        windowBits = Number.parseInt(this.#options.serverMaxWindowBits)
+      }
+
+      this.#inflate = createInflateRaw({ windowBits })
+      this.#inflate[kBuffer] = []
+      this.#inflate[kLength] = 0
+
+      this.#inflate.on('data', (data) => {
+        this.#inflate[kBuffer].push(data)
+        this.#inflate[kLength] += data.length
+      })
+
+      this.#inflate.on('error', (err) => {
+        this.#inflate = null
+        callback(err)
+      })
+    }
+
+    this.#inflate.write(chunk)
+    if (fin) {
+      this.#inflate.write(tail)
+    }
+
+    this.#inflate.flush(() => {
+      const full = Buffer.concat(this.#inflate[kBuffer], this.#inflate[kLength])
+
+      this.#inflate[kBuffer].length = 0
+      this.#inflate[kLength] = 0
+
+      callback(null, full)
+    })
+  }
+}
+
+module.exports = { PerMessageDeflate }
+
+
+/***/ }),
+
 /***/ 7591:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 
 
 const { Writable } = __nccwpck_require__(4492)
+const assert = __nccwpck_require__(8061)
 const { parserStates, opcodes, states, emptyBuffer, sentCloseFrameState } = __nccwpck_require__(9267)
 const { kReadyState, kSentClose, kResponse, kReceivedClose } = __nccwpck_require__(8933)
 const { channels } = __nccwpck_require__(9948)
-const { isValidStatusCode, failWebsocketConnection, websocketMessageReceived, utf8Decode } = __nccwpck_require__(4720)
+const {
+  isValidStatusCode,
+  isValidOpcode,
+  failWebsocketConnection,
+  websocketMessageReceived,
+  utf8Decode,
+  isControlFrame,
+  isTextBinaryFrame,
+  isContinuationFrame
+} = __nccwpck_require__(4720)
 const { WebsocketFrameSend } = __nccwpck_require__(7257)
-const { CloseEvent } = __nccwpck_require__(7864)
+const { closeWebSocketConnection } = __nccwpck_require__(8149)
+const { PerMessageDeflate } = __nccwpck_require__(4845)
 
 // This code was influenced by ws released under the MIT license.
 // Copyright (c) 2011 Einar Otto Stangvik <einaros@gmail.com>
@@ -28329,16 +28626,25 @@ const { CloseEvent } = __nccwpck_require__(7864)
 class ByteParser extends Writable {
   #buffers = []
   #byteOffset = 0
+  #loop = false
 
   #state = parserStates.INFO
 
   #info = {}
   #fragments = []
 
-  constructor (ws) {
+  /** @type {Map<string, PerMessageDeflate>} */
+  #extensions
+
+  constructor (ws, extensions) {
     super()
 
     this.ws = ws
+    this.#extensions = extensions == null ? new Map() : extensions
+
+    if (this.#extensions.has('permessage-deflate')) {
+      this.#extensions.set('permessage-deflate', new PerMessageDeflate(extensions))
+    }
   }
 
   /**
@@ -28348,6 +28654,7 @@ class ByteParser extends Writable {
   _write (chunk, _, callback) {
     this.#buffers.push(chunk)
     this.#byteOffset += chunk.length
+    this.#loop = true
 
     this.run(callback)
   }
@@ -28358,7 +28665,7 @@ class ByteParser extends Writable {
    * or not enough bytes are buffered to parse.
    */
   run (callback) {
-    while (true) {
+    while (this.#loop) {
       if (this.#state === parserStates.INFO) {
         // If there aren't enough bytes to parse the payload length, etc.
         if (this.#byteOffset < 2) {
@@ -28366,29 +28673,76 @@ class ByteParser extends Writable {
         }
 
         const buffer = this.consume(2)
+        const fin = (buffer[0] & 0x80) !== 0
+        const opcode = buffer[0] & 0x0F
+        const masked = (buffer[1] & 0x80) === 0x80
 
-        this.#info.fin = (buffer[0] & 0x80) !== 0
-        this.#info.opcode = buffer[0] & 0x0F
-        this.#info.masked = (buffer[1] & 0x80) === 0x80
+        const fragmented = !fin && opcode !== opcodes.CONTINUATION
+        const payloadLength = buffer[1] & 0x7F
 
-        if (this.#info.masked) {
+        const rsv1 = buffer[0] & 0x40
+        const rsv2 = buffer[0] & 0x20
+        const rsv3 = buffer[0] & 0x10
+
+        if (!isValidOpcode(opcode)) {
+          failWebsocketConnection(this.ws, 'Invalid opcode received')
+          return callback()
+        }
+
+        if (masked) {
           failWebsocketConnection(this.ws, 'Frame cannot be masked')
           return callback()
         }
 
-        // If we receive a fragmented message, we use the type of the first
-        // frame to parse the full message as binary/text, when it's terminated
-        this.#info.originalOpcode ??= this.#info.opcode
+        // MUST be 0 unless an extension is negotiated that defines meanings
+        // for non-zero values.  If a nonzero value is received and none of
+        // the negotiated extensions defines the meaning of such a nonzero
+        // value, the receiving endpoint MUST _Fail the WebSocket
+        // Connection_.
+        // This document allocates the RSV1 bit of the WebSocket header for
+        // PMCEs and calls the bit the "Per-Message Compressed" bit.  On a
+        // WebSocket connection where a PMCE is in use, this bit indicates
+        // whether a message is compressed or not.
+        if (rsv1 !== 0 && !this.#extensions.has('permessage-deflate')) {
+          failWebsocketConnection(this.ws, 'Expected RSV1 to be clear.')
+          return
+        }
 
-        this.#info.fragmented = !this.#info.fin && this.#info.opcode !== opcodes.CONTINUATION
+        if (rsv2 !== 0 || rsv3 !== 0) {
+          failWebsocketConnection(this.ws, 'RSV1, RSV2, RSV3 must be clear')
+          return
+        }
 
-        if (this.#info.fragmented && this.#info.opcode !== opcodes.BINARY && this.#info.opcode !== opcodes.TEXT) {
+        if (fragmented && !isTextBinaryFrame(opcode)) {
           // Only text and binary frames can be fragmented
           failWebsocketConnection(this.ws, 'Invalid frame type was fragmented.')
           return
         }
 
-        const payloadLength = buffer[1] & 0x7F
+        // If we are already parsing a text/binary frame and do not receive either
+        // a continuation frame or close frame, fail the connection.
+        if (isTextBinaryFrame(opcode) && this.#fragments.length > 0) {
+          failWebsocketConnection(this.ws, 'Expected continuation frame')
+          return
+        }
+
+        if (this.#info.fragmented && fragmented) {
+          // A fragmented frame can't be fragmented itself
+          failWebsocketConnection(this.ws, 'Fragmented frame exceeded 125 bytes.')
+          return
+        }
+
+        // "All control frames MUST have a payload length of 125 bytes or less
+        // and MUST NOT be fragmented."
+        if ((payloadLength > 125 || fragmented) && isControlFrame(opcode)) {
+          failWebsocketConnection(this.ws, 'Control frame either too large or fragmented')
+          return
+        }
+
+        if (isContinuationFrame(opcode) && this.#fragments.length === 0 && !this.#info.compressed) {
+          failWebsocketConnection(this.ws, 'Unexpected continuation frame')
+          return
+        }
 
         if (payloadLength <= 125) {
           this.#info.payloadLength = payloadLength
@@ -28399,115 +28753,15 @@ class ByteParser extends Writable {
           this.#state = parserStates.PAYLOADLENGTH_64
         }
 
-        if (this.#info.fragmented && payloadLength > 125) {
-          // A fragmented frame can't be fragmented itself
-          failWebsocketConnection(this.ws, 'Fragmented frame exceeded 125 bytes.')
-          return
-        } else if (
-          (this.#info.opcode === opcodes.PING ||
-            this.#info.opcode === opcodes.PONG ||
-            this.#info.opcode === opcodes.CLOSE) &&
-          payloadLength > 125
-        ) {
-          // Control frames can have a payload length of 125 bytes MAX
-          failWebsocketConnection(this.ws, 'Payload length for control frame exceeded 125 bytes.')
-          return
-        } else if (this.#info.opcode === opcodes.CLOSE) {
-          if (payloadLength === 1) {
-            failWebsocketConnection(this.ws, 'Received close frame with a 1-byte body.')
-            return
-          }
-
-          const body = this.consume(payloadLength)
-
-          this.#info.closeInfo = this.parseCloseBody(body)
-
-          if (this.#info.closeInfo.error) {
-            const { code, reason } = this.#info.closeInfo
-
-            callback(new CloseEvent('close', { wasClean: false, reason, code }))
-            return
-          }
-
-          if (this.ws[kSentClose] !== sentCloseFrameState.SENT) {
-            // If an endpoint receives a Close frame and did not previously send a
-            // Close frame, the endpoint MUST send a Close frame in response.  (When
-            // sending a Close frame in response, the endpoint typically echos the
-            // status code it received.)
-            let body = emptyBuffer
-            if (this.#info.closeInfo.code) {
-              body = Buffer.allocUnsafe(2)
-              body.writeUInt16BE(this.#info.closeInfo.code, 0)
-            }
-            const closeFrame = new WebsocketFrameSend(body)
-
-            this.ws[kResponse].socket.write(
-              closeFrame.createFrame(opcodes.CLOSE),
-              (err) => {
-                if (!err) {
-                  this.ws[kSentClose] = sentCloseFrameState.SENT
-                }
-              }
-            )
-          }
-
-          // Upon either sending or receiving a Close control frame, it is said
-          // that _The WebSocket Closing Handshake is Started_ and that the
-          // WebSocket connection is in the CLOSING state.
-          this.ws[kReadyState] = states.CLOSING
-          this.ws[kReceivedClose] = true
-
-          this.end()
-
-          return
-        } else if (this.#info.opcode === opcodes.PING) {
-          // Upon receipt of a Ping frame, an endpoint MUST send a Pong frame in
-          // response, unless it already received a Close frame.
-          // A Pong frame sent in response to a Ping frame must have identical
-          // "Application data"
-
-          const body = this.consume(payloadLength)
-
-          if (!this.ws[kReceivedClose]) {
-            const frame = new WebsocketFrameSend(body)
-
-            this.ws[kResponse].socket.write(frame.createFrame(opcodes.PONG))
-
-            if (channels.ping.hasSubscribers) {
-              channels.ping.publish({
-                payload: body
-              })
-            }
-          }
-
-          this.#state = parserStates.INFO
-
-          if (this.#byteOffset > 0) {
-            continue
-          } else {
-            callback()
-            return
-          }
-        } else if (this.#info.opcode === opcodes.PONG) {
-          // A Pong frame MAY be sent unsolicited.  This serves as a
-          // unidirectional heartbeat.  A response to an unsolicited Pong frame is
-          // not expected.
-
-          const body = this.consume(payloadLength)
-
-          if (channels.pong.hasSubscribers) {
-            channels.pong.publish({
-              payload: body
-            })
-          }
-
-          if (this.#byteOffset > 0) {
-            continue
-          } else {
-            callback()
-            return
-          }
+        if (isTextBinaryFrame(opcode)) {
+          this.#info.binaryType = opcode
+          this.#info.compressed = rsv1 !== 0
         }
+
+        this.#info.opcode = opcode
+        this.#info.masked = masked
+        this.#info.fin = fin
+        this.#info.fragmented = fragmented
       } else if (this.#state === parserStates.PAYLOADLENGTH_16) {
         if (this.#byteOffset < 2) {
           return callback()
@@ -28542,33 +28796,57 @@ class ByteParser extends Writable {
         this.#state = parserStates.READ_DATA
       } else if (this.#state === parserStates.READ_DATA) {
         if (this.#byteOffset < this.#info.payloadLength) {
-          // If there is still more data in this chunk that needs to be read
           return callback()
-        } else if (this.#byteOffset >= this.#info.payloadLength) {
-          // If the server sent multiple frames in a single chunk
-
-          const body = this.consume(this.#info.payloadLength)
-
-          this.#fragments.push(body)
-
-          // If the frame is unfragmented, or a fragmented frame was terminated,
-          // a message was received
-          if (!this.#info.fragmented || (this.#info.fin && this.#info.opcode === opcodes.CONTINUATION)) {
-            const fullMessage = Buffer.concat(this.#fragments)
-
-            websocketMessageReceived(this.ws, this.#info.originalOpcode, fullMessage)
-
-            this.#info = {}
-            this.#fragments.length = 0
-          }
-
-          this.#state = parserStates.INFO
         }
-      }
 
-      if (this.#byteOffset === 0 && this.#info.payloadLength !== 0) {
-        callback()
-        break
+        const body = this.consume(this.#info.payloadLength)
+
+        if (isControlFrame(this.#info.opcode)) {
+          this.#loop = this.parseControlFrame(body)
+          this.#state = parserStates.INFO
+        } else {
+          if (!this.#info.compressed) {
+            this.#fragments.push(body)
+
+            // If the frame is not fragmented, a message has been received.
+            // If the frame is fragmented, it will terminate with a fin bit set
+            // and an opcode of 0 (continuation), therefore we handle that when
+            // parsing continuation frames, not here.
+            if (!this.#info.fragmented && this.#info.fin) {
+              const fullMessage = Buffer.concat(this.#fragments)
+              websocketMessageReceived(this.ws, this.#info.binaryType, fullMessage)
+              this.#fragments.length = 0
+            }
+
+            this.#state = parserStates.INFO
+          } else {
+            this.#extensions.get('permessage-deflate').decompress(body, this.#info.fin, (error, data) => {
+              if (error) {
+                closeWebSocketConnection(this.ws, 1007, error.message, error.message.length)
+                return
+              }
+
+              this.#fragments.push(data)
+
+              if (!this.#info.fin) {
+                this.#state = parserStates.INFO
+                this.#loop = true
+                this.run(callback)
+                return
+              }
+
+              websocketMessageReceived(this.ws, this.#info.binaryType, Buffer.concat(this.#fragments))
+
+              this.#loop = true
+              this.#state = parserStates.INFO
+              this.#fragments.length = 0
+              this.run(callback)
+            })
+
+            this.#loop = false
+            break
+          }
+        }
       }
     }
   }
@@ -28576,11 +28854,11 @@ class ByteParser extends Writable {
   /**
    * Take n bytes from the buffered Buffers
    * @param {number} n
-   * @returns {Buffer|null}
+   * @returns {Buffer}
    */
   consume (n) {
     if (n > this.#byteOffset) {
-      return null
+      throw new Error('Called consume() before buffers satiated.')
     } else if (n === 0) {
       return emptyBuffer
     }
@@ -28616,6 +28894,8 @@ class ByteParser extends Writable {
   }
 
   parseCloseBody (data) {
+    assert(data.length !== 1)
+
     // https://datatracker.ietf.org/doc/html/rfc6455#section-7.1.5
     /** @type {number|undefined} */
     let code
@@ -28649,6 +28929,90 @@ class ByteParser extends Writable {
     return { code, reason, error: false }
   }
 
+  /**
+   * Parses control frames.
+   * @param {Buffer} body
+   */
+  parseControlFrame (body) {
+    const { opcode, payloadLength } = this.#info
+
+    if (opcode === opcodes.CLOSE) {
+      if (payloadLength === 1) {
+        failWebsocketConnection(this.ws, 'Received close frame with a 1-byte body.')
+        return false
+      }
+
+      this.#info.closeInfo = this.parseCloseBody(body)
+
+      if (this.#info.closeInfo.error) {
+        const { code, reason } = this.#info.closeInfo
+
+        closeWebSocketConnection(this.ws, code, reason, reason.length)
+        failWebsocketConnection(this.ws, reason)
+        return false
+      }
+
+      if (this.ws[kSentClose] !== sentCloseFrameState.SENT) {
+        // If an endpoint receives a Close frame and did not previously send a
+        // Close frame, the endpoint MUST send a Close frame in response.  (When
+        // sending a Close frame in response, the endpoint typically echos the
+        // status code it received.)
+        let body = emptyBuffer
+        if (this.#info.closeInfo.code) {
+          body = Buffer.allocUnsafe(2)
+          body.writeUInt16BE(this.#info.closeInfo.code, 0)
+        }
+        const closeFrame = new WebsocketFrameSend(body)
+
+        this.ws[kResponse].socket.write(
+          closeFrame.createFrame(opcodes.CLOSE),
+          (err) => {
+            if (!err) {
+              this.ws[kSentClose] = sentCloseFrameState.SENT
+            }
+          }
+        )
+      }
+
+      // Upon either sending or receiving a Close control frame, it is said
+      // that _The WebSocket Closing Handshake is Started_ and that the
+      // WebSocket connection is in the CLOSING state.
+      this.ws[kReadyState] = states.CLOSING
+      this.ws[kReceivedClose] = true
+
+      return false
+    } else if (opcode === opcodes.PING) {
+      // Upon receipt of a Ping frame, an endpoint MUST send a Pong frame in
+      // response, unless it already received a Close frame.
+      // A Pong frame sent in response to a Ping frame must have identical
+      // "Application data"
+
+      if (!this.ws[kReceivedClose]) {
+        const frame = new WebsocketFrameSend(body)
+
+        this.ws[kResponse].socket.write(frame.createFrame(opcodes.PONG))
+
+        if (channels.ping.hasSubscribers) {
+          channels.ping.publish({
+            payload: body
+          })
+        }
+      }
+    } else if (opcode === opcodes.PONG) {
+      // A Pong frame MAY be sent unsolicited.  This serves as a
+      // unidirectional heartbeat.  A response to an unsolicited Pong frame is
+      // not expected.
+
+      if (channels.pong.hasSubscribers) {
+        channels.pong.publish({
+          payload: body
+        })
+      }
+    }
+
+    return true
+  }
+
   get closingInfo () {
     return this.#info.closeInfo
   }
@@ -28657,6 +29021,117 @@ class ByteParser extends Writable {
 module.exports = {
   ByteParser
 }
+
+
+/***/ }),
+
+/***/ 1657:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+
+const { WebsocketFrameSend } = __nccwpck_require__(7257)
+const { opcodes, sendHints } = __nccwpck_require__(9267)
+const FixedQueue = __nccwpck_require__(6829)
+
+/** @type {typeof Uint8Array} */
+const FastBuffer = Buffer[Symbol.species]
+
+/**
+ * @typedef {object} SendQueueNode
+ * @property {Promise<void> | null} promise
+ * @property {((...args: any[]) => any)} callback
+ * @property {Buffer | null} frame
+ */
+
+class SendQueue {
+  /**
+   * @type {FixedQueue}
+   */
+  #queue = new FixedQueue()
+
+  /**
+   * @type {boolean}
+   */
+  #running = false
+
+  /** @type {import('node:net').Socket} */
+  #socket
+
+  constructor (socket) {
+    this.#socket = socket
+  }
+
+  add (item, cb, hint) {
+    if (hint !== sendHints.blob) {
+      const frame = createFrame(item, hint)
+      if (!this.#running) {
+        // fast-path
+        this.#socket.write(frame, cb)
+      } else {
+        /** @type {SendQueueNode} */
+        const node = {
+          promise: null,
+          callback: cb,
+          frame
+        }
+        this.#queue.push(node)
+      }
+      return
+    }
+
+    /** @type {SendQueueNode} */
+    const node = {
+      promise: item.arrayBuffer().then((ab) => {
+        node.promise = null
+        node.frame = createFrame(ab, hint)
+      }),
+      callback: cb,
+      frame: null
+    }
+
+    this.#queue.push(node)
+
+    if (!this.#running) {
+      this.#run()
+    }
+  }
+
+  async #run () {
+    this.#running = true
+    const queue = this.#queue
+    while (!queue.isEmpty()) {
+      const node = queue.shift()
+      // wait pending promise
+      if (node.promise !== null) {
+        await node.promise
+      }
+      // write
+      this.#socket.write(node.frame, node.callback)
+      // cleanup
+      node.callback = node.frame = null
+    }
+    this.#running = false
+  }
+}
+
+function createFrame (data, hint) {
+  return new WebsocketFrameSend(toBuffer(data, hint)).createFrame(hint === sendHints.string ? opcodes.TEXT : opcodes.BINARY)
+}
+
+function toBuffer (data, hint) {
+  switch (hint) {
+    case sendHints.string:
+      return Buffer.from(data)
+    case sendHints.arrayBuffer:
+    case sendHints.blob:
+      return new FastBuffer(data)
+    case sendHints.typedArray:
+      return new FastBuffer(data.buffer, data.byteOffset, data.byteLength)
+  }
+}
+
+module.exports = { SendQueue }
 
 
 /***/ }),
@@ -28689,6 +29164,7 @@ const { kReadyState, kController, kResponse, kBinaryType, kWebSocketURL } = __nc
 const { states, opcodes } = __nccwpck_require__(9267)
 const { ErrorEvent, createFastMessageEvent } = __nccwpck_require__(7864)
 const { isUtf8 } = __nccwpck_require__(2254)
+const { collectASequenceOfCodePointsFast, removeHTTPWhitespace } = __nccwpck_require__(1423)
 
 /* globals Blob */
 
@@ -28895,6 +29371,72 @@ function failWebsocketConnection (ws, reason) {
   }
 }
 
+/**
+ * @see https://datatracker.ietf.org/doc/html/rfc6455#section-5.5
+ * @param {number} opcode
+ */
+function isControlFrame (opcode) {
+  return (
+    opcode === opcodes.CLOSE ||
+    opcode === opcodes.PING ||
+    opcode === opcodes.PONG
+  )
+}
+
+function isContinuationFrame (opcode) {
+  return opcode === opcodes.CONTINUATION
+}
+
+function isTextBinaryFrame (opcode) {
+  return opcode === opcodes.TEXT || opcode === opcodes.BINARY
+}
+
+function isValidOpcode (opcode) {
+  return isTextBinaryFrame(opcode) || isContinuationFrame(opcode) || isControlFrame(opcode)
+}
+
+/**
+ * Parses a Sec-WebSocket-Extensions header value.
+ * @param {string} extensions
+ * @returns {Map<string, string>}
+ */
+// TODO(@Uzlopak, @KhafraDev): make compliant https://datatracker.ietf.org/doc/html/rfc6455#section-9.1
+function parseExtensions (extensions) {
+  const position = { position: 0 }
+  const extensionList = new Map()
+
+  while (position.position < extensions.length) {
+    const pair = collectASequenceOfCodePointsFast(';', extensions, position)
+    const [name, value = ''] = pair.split('=')
+
+    extensionList.set(
+      removeHTTPWhitespace(name, true, false),
+      removeHTTPWhitespace(value, false, true)
+    )
+
+    position.position++
+  }
+
+  return extensionList
+}
+
+/**
+ * @see https://www.rfc-editor.org/rfc/rfc7692#section-7.1.2.2
+ * @description "client-max-window-bits = 1*DIGIT"
+ * @param {string} value
+ */
+function isValidClientWindowBits (value) {
+  for (let i = 0; i < value.length; i++) {
+    const byte = value.charCodeAt(i)
+
+    if (byte < 0x30 || byte > 0x39) {
+      return false
+    }
+  }
+
+  return true
+}
+
 // https://nodejs.org/api/intl.html#detecting-internationalization-support
 const hasIntl = typeof process.versions.icu === 'string'
 const fatalDecoder = hasIntl ? new TextDecoder('utf-8', { fatal: true }) : undefined
@@ -28922,7 +29464,13 @@ module.exports = {
   isValidStatusCode,
   failWebsocketConnection,
   websocketMessageReceived,
-  utf8Decode
+  utf8Decode,
+  isControlFrame,
+  isContinuationFrame,
+  isTextBinaryFrame,
+  isValidOpcode,
+  parseExtensions,
+  isValidClientWindowBits
 }
 
 
@@ -28936,7 +29484,7 @@ module.exports = {
 const { webidl } = __nccwpck_require__(4867)
 const { URLSerializer } = __nccwpck_require__(1423)
 const { environmentSettingsObject } = __nccwpck_require__(9665)
-const { staticPropertyDescriptors, states, sentCloseFrameState, opcodes } = __nccwpck_require__(9267)
+const { staticPropertyDescriptors, states, sentCloseFrameState, sendHints } = __nccwpck_require__(9267)
 const {
   kWebSocketURL,
   kReadyState,
@@ -28954,16 +29502,12 @@ const {
   fireEvent
 } = __nccwpck_require__(4720)
 const { establishWebSocketConnection, closeWebSocketConnection } = __nccwpck_require__(8149)
-const { WebsocketFrameSend } = __nccwpck_require__(7257)
 const { ByteParser } = __nccwpck_require__(7591)
 const { kEnumerableProperty, isBlobLike } = __nccwpck_require__(6766)
 const { getGlobalDispatcher } = __nccwpck_require__(5443)
 const { types } = __nccwpck_require__(7261)
-const { ErrorEvent } = __nccwpck_require__(7864)
-
-let experimentalWarned = false
-
-const FastBuffer = Buffer[Symbol.species]
+const { ErrorEvent, CloseEvent } = __nccwpck_require__(7864)
+const { SendQueue } = __nccwpck_require__(1657)
 
 // https://websockets.spec.whatwg.org/#interface-definition
 class WebSocket extends EventTarget {
@@ -28978,6 +29522,9 @@ class WebSocket extends EventTarget {
   #protocol = ''
   #extensions = ''
 
+  /** @type {SendQueue} */
+  #sendQueue
+
   /**
    * @param {string} url
    * @param {string|string[]} protocols
@@ -28987,13 +29534,6 @@ class WebSocket extends EventTarget {
 
     const prefix = 'WebSocket constructor'
     webidl.argumentLengthCheck(arguments, 1, prefix)
-
-    if (!experimentalWarned) {
-      experimentalWarned = true
-      process.emitWarning('WebSockets are experimental, expect them to change at any time.', {
-        code: 'UNDICI-WS'
-      })
-    }
 
     const options = webidl.converters['DOMString or sequence<DOMString> or WebSocketInit'](protocols, prefix, 'options')
 
@@ -29068,7 +29608,7 @@ class WebSocket extends EventTarget {
       protocols,
       client,
       this,
-      (response) => this.#onConnectionEstablished(response),
+      (response, extensions) => this.#onConnectionEstablished(response, extensions),
       options
     )
 
@@ -29162,9 +29702,6 @@ class WebSocket extends EventTarget {
       return
     }
 
-    /** @type {import('stream').Duplex} */
-    const socket = this[kResponse].socket
-
     // If data is a string
     if (typeof data === 'string') {
       // If the WebSocket connection is established and the WebSocket
@@ -29178,14 +29715,12 @@ class WebSocket extends EventTarget {
       // the bufferedAmount attribute by the number of bytes needed to
       // express the argument as UTF-8.
 
-      const value = Buffer.from(data)
-      const frame = new WebsocketFrameSend(value)
-      const buffer = frame.createFrame(opcodes.TEXT)
+      const length = Buffer.byteLength(data)
 
-      this.#bufferedAmount += value.byteLength
-      socket.write(buffer, () => {
-        this.#bufferedAmount -= value.byteLength
-      })
+      this.#bufferedAmount += length
+      this.#sendQueue.add(data, () => {
+        this.#bufferedAmount -= length
+      }, sendHints.string)
     } else if (types.isArrayBuffer(data)) {
       // If the WebSocket connection is established, and the WebSocket
       // closing handshake has not yet started, then the user agent must
@@ -29199,14 +29734,10 @@ class WebSocket extends EventTarget {
       // increase the bufferedAmount attribute by the length of the
       // ArrayBuffer in bytes.
 
-      const value = new FastBuffer(data)
-      const frame = new WebsocketFrameSend(value)
-      const buffer = frame.createFrame(opcodes.BINARY)
-
-      this.#bufferedAmount += value.byteLength
-      socket.write(buffer, () => {
-        this.#bufferedAmount -= value.byteLength
-      })
+      this.#bufferedAmount += data.byteLength
+      this.#sendQueue.add(data, () => {
+        this.#bufferedAmount -= data.byteLength
+      }, sendHints.arrayBuffer)
     } else if (ArrayBuffer.isView(data)) {
       // If the WebSocket connection is established, and the WebSocket
       // closing handshake has not yet started, then the user agent must
@@ -29220,15 +29751,10 @@ class WebSocket extends EventTarget {
       // not throw an exception must increase the bufferedAmount attribute
       // by the length of data’s buffer in bytes.
 
-      const ab = new FastBuffer(data, data.byteOffset, data.byteLength)
-
-      const frame = new WebsocketFrameSend(ab)
-      const buffer = frame.createFrame(opcodes.BINARY)
-
-      this.#bufferedAmount += ab.byteLength
-      socket.write(buffer, () => {
-        this.#bufferedAmount -= ab.byteLength
-      })
+      this.#bufferedAmount += data.byteLength
+      this.#sendQueue.add(data, () => {
+        this.#bufferedAmount -= data.byteLength
+      }, sendHints.typedArray)
     } else if (isBlobLike(data)) {
       // If the WebSocket connection is established, and the WebSocket
       // closing handshake has not yet started, then the user agent must
@@ -29241,18 +29767,10 @@ class WebSocket extends EventTarget {
       // an exception must increase the bufferedAmount attribute by the size
       // of the Blob object’s raw data, in bytes.
 
-      const frame = new WebsocketFrameSend()
-
-      data.arrayBuffer().then((ab) => {
-        const value = new FastBuffer(ab)
-        frame.frameData = value
-        const buffer = frame.createFrame(opcodes.BINARY)
-
-        this.#bufferedAmount += value.byteLength
-        socket.write(buffer, () => {
-          this.#bufferedAmount -= value.byteLength
-        })
-      })
+      this.#bufferedAmount += data.size
+      this.#sendQueue.add(data, () => {
+        this.#bufferedAmount -= data.size
+      }, sendHints.blob)
     }
   }
 
@@ -29391,17 +29909,19 @@ class WebSocket extends EventTarget {
   /**
    * @see https://websockets.spec.whatwg.org/#feedback-from-the-protocol
    */
-  #onConnectionEstablished (response) {
+  #onConnectionEstablished (response, parsedExtensions) {
     // processResponse is called when the "response’s header list has been received and initialized."
     // once this happens, the connection is open
     this[kResponse] = response
 
-    const parser = new ByteParser(this)
+    const parser = new ByteParser(this, parsedExtensions)
     parser.on('drain', onParserDrain)
     parser.on('error', onParserError.bind(this))
 
     response.socket.ws = this
     this[kByteParser] = parser
+
+    this.#sendQueue = new SendQueue(response.socket)
 
     // 1. Change the ready state to OPEN (1).
     this[kReadyState] = states.OPEN
@@ -29491,7 +30011,7 @@ webidl.converters.WebSocketInit = webidl.dictionaryConverter([
   },
   {
     key: 'dispatcher',
-    converter: (V) => V,
+    converter: webidl.converters.any,
     defaultValue: () => getGlobalDispatcher()
   },
   {
@@ -29527,9 +30047,19 @@ function onParserDrain () {
 }
 
 function onParserError (err) {
-  fireEvent('error', this, () => new ErrorEvent('error', { error: err, message: err.reason }))
+  let message
+  let code
 
-  closeWebSocketConnection(this, err.code)
+  if (err instanceof CloseEvent) {
+    message = err.reason
+    code = err.code
+  } else {
+    message = err.message
+  }
+
+  fireEvent('error', this, () => new ErrorEvent('error', { error: err, message }))
+
+  closeWebSocketConnection(this, code)
 }
 
 module.exports = {
@@ -54187,1957 +54717,8 @@ exports["default"] = _default;
 
 /***/ }),
 
-/***/ 9491:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("assert");
-
-/***/ }),
-
-/***/ 852:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("async_hooks");
-
-/***/ }),
-
-/***/ 4300:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("buffer");
-
-/***/ }),
-
-/***/ 2081:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("child_process");
-
-/***/ }),
-
-/***/ 6206:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("console");
-
-/***/ }),
-
-/***/ 6113:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("crypto");
-
-/***/ }),
-
-/***/ 7643:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("diagnostics_channel");
-
-/***/ }),
-
-/***/ 2361:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("events");
-
-/***/ }),
-
-/***/ 7147:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("fs");
-
-/***/ }),
-
-/***/ 3685:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("http");
-
-/***/ }),
-
-/***/ 5158:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("http2");
-
-/***/ }),
-
-/***/ 5687:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("https");
-
-/***/ }),
-
-/***/ 1808:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("net");
-
-/***/ }),
-
-/***/ 8061:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:assert");
-
-/***/ }),
-
-/***/ 2761:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:async_hooks");
-
-/***/ }),
-
-/***/ 2254:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:buffer");
-
-/***/ }),
-
-/***/ 27:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:console");
-
-/***/ }),
-
-/***/ 6005:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:crypto");
-
-/***/ }),
-
-/***/ 5714:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:diagnostics_channel");
-
-/***/ }),
-
-/***/ 5673:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:events");
-
-/***/ }),
-
-/***/ 8849:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:http");
-
-/***/ }),
-
-/***/ 2725:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:http2");
-
-/***/ }),
-
-/***/ 7503:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:net");
-
-/***/ }),
-
-/***/ 9411:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:path");
-
-/***/ }),
-
-/***/ 8846:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:perf_hooks");
-
-/***/ }),
-
-/***/ 7742:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:process");
-
-/***/ }),
-
-/***/ 9630:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:querystring");
-
-/***/ }),
-
-/***/ 4492:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:stream");
-
-/***/ }),
-
-/***/ 1764:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:tls");
-
-/***/ }),
-
-/***/ 1041:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:url");
-
-/***/ }),
-
-/***/ 7261:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:util");
-
-/***/ }),
-
-/***/ 3746:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:util/types");
-
-/***/ }),
-
-/***/ 4086:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:worker_threads");
-
-/***/ }),
-
-/***/ 5628:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:zlib");
-
-/***/ }),
-
-/***/ 2037:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("os");
-
-/***/ }),
-
-/***/ 1017:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("path");
-
-/***/ }),
-
-/***/ 4074:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("perf_hooks");
-
-/***/ }),
-
-/***/ 3477:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("querystring");
-
-/***/ }),
-
-/***/ 2781:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("stream");
-
-/***/ }),
-
-/***/ 5356:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("stream/web");
-
-/***/ }),
-
-/***/ 1576:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("string_decoder");
-
-/***/ }),
-
-/***/ 9512:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("timers");
-
-/***/ }),
-
-/***/ 4404:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("tls");
-
-/***/ }),
-
-/***/ 7310:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("url");
-
-/***/ }),
-
-/***/ 3837:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("util");
-
-/***/ }),
-
-/***/ 9830:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("util/types");
-
-/***/ }),
-
-/***/ 1267:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("worker_threads");
-
-/***/ }),
-
-/***/ 9796:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("zlib");
-
-/***/ }),
-
-/***/ 2960:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-
-
-const WritableStream = (__nccwpck_require__(4492).Writable)
-const inherits = (__nccwpck_require__(7261).inherits)
-
-const StreamSearch = __nccwpck_require__(1142)
-
-const PartStream = __nccwpck_require__(1620)
-const HeaderParser = __nccwpck_require__(2032)
-
-const DASH = 45
-const B_ONEDASH = Buffer.from('-')
-const B_CRLF = Buffer.from('\r\n')
-const EMPTY_FN = function () {}
-
-function Dicer (cfg) {
-  if (!(this instanceof Dicer)) { return new Dicer(cfg) }
-  WritableStream.call(this, cfg)
-
-  if (!cfg || (!cfg.headerFirst && typeof cfg.boundary !== 'string')) { throw new TypeError('Boundary required') }
-
-  if (typeof cfg.boundary === 'string') { this.setBoundary(cfg.boundary) } else { this._bparser = undefined }
-
-  this._headerFirst = cfg.headerFirst
-
-  this._dashes = 0
-  this._parts = 0
-  this._finished = false
-  this._realFinish = false
-  this._isPreamble = true
-  this._justMatched = false
-  this._firstWrite = true
-  this._inHeader = true
-  this._part = undefined
-  this._cb = undefined
-  this._ignoreData = false
-  this._partOpts = { highWaterMark: cfg.partHwm }
-  this._pause = false
-
-  const self = this
-  this._hparser = new HeaderParser(cfg)
-  this._hparser.on('header', function (header) {
-    self._inHeader = false
-    self._part.emit('header', header)
-  })
-}
-inherits(Dicer, WritableStream)
-
-Dicer.prototype.emit = function (ev) {
-  if (ev === 'finish' && !this._realFinish) {
-    if (!this._finished) {
-      const self = this
-      process.nextTick(function () {
-        self.emit('error', new Error('Unexpected end of multipart data'))
-        if (self._part && !self._ignoreData) {
-          const type = (self._isPreamble ? 'Preamble' : 'Part')
-          self._part.emit('error', new Error(type + ' terminated early due to unexpected end of multipart data'))
-          self._part.push(null)
-          process.nextTick(function () {
-            self._realFinish = true
-            self.emit('finish')
-            self._realFinish = false
-          })
-          return
-        }
-        self._realFinish = true
-        self.emit('finish')
-        self._realFinish = false
-      })
-    }
-  } else { WritableStream.prototype.emit.apply(this, arguments) }
-}
-
-Dicer.prototype._write = function (data, encoding, cb) {
-  // ignore unexpected data (e.g. extra trailer data after finished)
-  if (!this._hparser && !this._bparser) { return cb() }
-
-  if (this._headerFirst && this._isPreamble) {
-    if (!this._part) {
-      this._part = new PartStream(this._partOpts)
-      if (this.listenerCount('preamble') !== 0) { this.emit('preamble', this._part) } else { this._ignore() }
-    }
-    const r = this._hparser.push(data)
-    if (!this._inHeader && r !== undefined && r < data.length) { data = data.slice(r) } else { return cb() }
-  }
-
-  // allows for "easier" testing
-  if (this._firstWrite) {
-    this._bparser.push(B_CRLF)
-    this._firstWrite = false
-  }
-
-  this._bparser.push(data)
-
-  if (this._pause) { this._cb = cb } else { cb() }
-}
-
-Dicer.prototype.reset = function () {
-  this._part = undefined
-  this._bparser = undefined
-  this._hparser = undefined
-}
-
-Dicer.prototype.setBoundary = function (boundary) {
-  const self = this
-  this._bparser = new StreamSearch('\r\n--' + boundary)
-  this._bparser.on('info', function (isMatch, data, start, end) {
-    self._oninfo(isMatch, data, start, end)
-  })
-}
-
-Dicer.prototype._ignore = function () {
-  if (this._part && !this._ignoreData) {
-    this._ignoreData = true
-    this._part.on('error', EMPTY_FN)
-    // we must perform some kind of read on the stream even though we are
-    // ignoring the data, otherwise node's Readable stream will not emit 'end'
-    // after pushing null to the stream
-    this._part.resume()
-  }
-}
-
-Dicer.prototype._oninfo = function (isMatch, data, start, end) {
-  let buf; const self = this; let i = 0; let r; let shouldWriteMore = true
-
-  if (!this._part && this._justMatched && data) {
-    while (this._dashes < 2 && (start + i) < end) {
-      if (data[start + i] === DASH) {
-        ++i
-        ++this._dashes
-      } else {
-        if (this._dashes) { buf = B_ONEDASH }
-        this._dashes = 0
-        break
-      }
-    }
-    if (this._dashes === 2) {
-      if ((start + i) < end && this.listenerCount('trailer') !== 0) { this.emit('trailer', data.slice(start + i, end)) }
-      this.reset()
-      this._finished = true
-      // no more parts will be added
-      if (self._parts === 0) {
-        self._realFinish = true
-        self.emit('finish')
-        self._realFinish = false
-      }
-    }
-    if (this._dashes) { return }
-  }
-  if (this._justMatched) { this._justMatched = false }
-  if (!this._part) {
-    this._part = new PartStream(this._partOpts)
-    this._part._read = function (n) {
-      self._unpause()
-    }
-    if (this._isPreamble && this.listenerCount('preamble') !== 0) {
-      this.emit('preamble', this._part)
-    } else if (this._isPreamble !== true && this.listenerCount('part') !== 0) {
-      this.emit('part', this._part)
-    } else {
-      this._ignore()
-    }
-    if (!this._isPreamble) { this._inHeader = true }
-  }
-  if (data && start < end && !this._ignoreData) {
-    if (this._isPreamble || !this._inHeader) {
-      if (buf) { shouldWriteMore = this._part.push(buf) }
-      shouldWriteMore = this._part.push(data.slice(start, end))
-      if (!shouldWriteMore) { this._pause = true }
-    } else if (!this._isPreamble && this._inHeader) {
-      if (buf) { this._hparser.push(buf) }
-      r = this._hparser.push(data.slice(start, end))
-      if (!this._inHeader && r !== undefined && r < end) { this._oninfo(false, data, start + r, end) }
-    }
-  }
-  if (isMatch) {
-    this._hparser.reset()
-    if (this._isPreamble) { this._isPreamble = false } else {
-      if (start !== end) {
-        ++this._parts
-        this._part.on('end', function () {
-          if (--self._parts === 0) {
-            if (self._finished) {
-              self._realFinish = true
-              self.emit('finish')
-              self._realFinish = false
-            } else {
-              self._unpause()
-            }
-          }
-        })
-      }
-    }
-    this._part.push(null)
-    this._part = undefined
-    this._ignoreData = false
-    this._justMatched = true
-    this._dashes = 0
-  }
-}
-
-Dicer.prototype._unpause = function () {
-  if (!this._pause) { return }
-
-  this._pause = false
-  if (this._cb) {
-    const cb = this._cb
-    this._cb = undefined
-    cb()
-  }
-}
-
-module.exports = Dicer
-
-
-/***/ }),
-
-/***/ 2032:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-
-
-const EventEmitter = (__nccwpck_require__(5673).EventEmitter)
-const inherits = (__nccwpck_require__(7261).inherits)
-const getLimit = __nccwpck_require__(1467)
-
-const StreamSearch = __nccwpck_require__(1142)
-
-const B_DCRLF = Buffer.from('\r\n\r\n')
-const RE_CRLF = /\r\n/g
-const RE_HDR = /^([^:]+):[ \t]?([\x00-\xFF]+)?$/ // eslint-disable-line no-control-regex
-
-function HeaderParser (cfg) {
-  EventEmitter.call(this)
-
-  cfg = cfg || {}
-  const self = this
-  this.nread = 0
-  this.maxed = false
-  this.npairs = 0
-  this.maxHeaderPairs = getLimit(cfg, 'maxHeaderPairs', 2000)
-  this.maxHeaderSize = getLimit(cfg, 'maxHeaderSize', 80 * 1024)
-  this.buffer = ''
-  this.header = {}
-  this.finished = false
-  this.ss = new StreamSearch(B_DCRLF)
-  this.ss.on('info', function (isMatch, data, start, end) {
-    if (data && !self.maxed) {
-      if (self.nread + end - start >= self.maxHeaderSize) {
-        end = self.maxHeaderSize - self.nread + start
-        self.nread = self.maxHeaderSize
-        self.maxed = true
-      } else { self.nread += (end - start) }
-
-      self.buffer += data.toString('binary', start, end)
-    }
-    if (isMatch) { self._finish() }
-  })
-}
-inherits(HeaderParser, EventEmitter)
-
-HeaderParser.prototype.push = function (data) {
-  const r = this.ss.push(data)
-  if (this.finished) { return r }
-}
-
-HeaderParser.prototype.reset = function () {
-  this.finished = false
-  this.buffer = ''
-  this.header = {}
-  this.ss.reset()
-}
-
-HeaderParser.prototype._finish = function () {
-  if (this.buffer) { this._parseHeader() }
-  this.ss.matches = this.ss.maxMatches
-  const header = this.header
-  this.header = {}
-  this.buffer = ''
-  this.finished = true
-  this.nread = this.npairs = 0
-  this.maxed = false
-  this.emit('header', header)
-}
-
-HeaderParser.prototype._parseHeader = function () {
-  if (this.npairs === this.maxHeaderPairs) { return }
-
-  const lines = this.buffer.split(RE_CRLF)
-  const len = lines.length
-  let m, h
-
-  for (var i = 0; i < len; ++i) { // eslint-disable-line no-var
-    if (lines[i].length === 0) { continue }
-    if (lines[i][0] === '\t' || lines[i][0] === ' ') {
-      // folded header content
-      // RFC2822 says to just remove the CRLF and not the whitespace following
-      // it, so we follow the RFC and include the leading whitespace ...
-      if (h) {
-        this.header[h][this.header[h].length - 1] += lines[i]
-        continue
-      }
-    }
-
-    const posColon = lines[i].indexOf(':')
-    if (
-      posColon === -1 ||
-      posColon === 0
-    ) {
-      return
-    }
-    m = RE_HDR.exec(lines[i])
-    h = m[1].toLowerCase()
-    this.header[h] = this.header[h] || []
-    this.header[h].push((m[2] || ''))
-    if (++this.npairs === this.maxHeaderPairs) { break }
-  }
-}
-
-module.exports = HeaderParser
-
-
-/***/ }),
-
-/***/ 1620:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-
-
-const inherits = (__nccwpck_require__(7261).inherits)
-const ReadableStream = (__nccwpck_require__(4492).Readable)
-
-function PartStream (opts) {
-  ReadableStream.call(this, opts)
-}
-inherits(PartStream, ReadableStream)
-
-PartStream.prototype._read = function (n) {}
-
-module.exports = PartStream
-
-
-/***/ }),
-
-/***/ 1142:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-
-
-/**
- * Copyright Brian White. All rights reserved.
- *
- * @see https://github.com/mscdex/streamsearch
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to
- * deal in the Software without restriction, including without limitation the
- * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
- * sell copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
- *
- * Based heavily on the Streaming Boyer-Moore-Horspool C++ implementation
- * by Hongli Lai at: https://github.com/FooBarWidget/boyer-moore-horspool
- */
-const EventEmitter = (__nccwpck_require__(5673).EventEmitter)
-const inherits = (__nccwpck_require__(7261).inherits)
-
-function SBMH (needle) {
-  if (typeof needle === 'string') {
-    needle = Buffer.from(needle)
-  }
-
-  if (!Buffer.isBuffer(needle)) {
-    throw new TypeError('The needle has to be a String or a Buffer.')
-  }
-
-  const needleLength = needle.length
-
-  if (needleLength === 0) {
-    throw new Error('The needle cannot be an empty String/Buffer.')
-  }
-
-  if (needleLength > 256) {
-    throw new Error('The needle cannot have a length bigger than 256.')
-  }
-
-  this.maxMatches = Infinity
-  this.matches = 0
-
-  this._occ = new Array(256)
-    .fill(needleLength) // Initialize occurrence table.
-  this._lookbehind_size = 0
-  this._needle = needle
-  this._bufpos = 0
-
-  this._lookbehind = Buffer.alloc(needleLength)
-
-  // Populate occurrence table with analysis of the needle,
-  // ignoring last letter.
-  for (var i = 0; i < needleLength - 1; ++i) { // eslint-disable-line no-var
-    this._occ[needle[i]] = needleLength - 1 - i
-  }
-}
-inherits(SBMH, EventEmitter)
-
-SBMH.prototype.reset = function () {
-  this._lookbehind_size = 0
-  this.matches = 0
-  this._bufpos = 0
-}
-
-SBMH.prototype.push = function (chunk, pos) {
-  if (!Buffer.isBuffer(chunk)) {
-    chunk = Buffer.from(chunk, 'binary')
-  }
-  const chlen = chunk.length
-  this._bufpos = pos || 0
-  let r
-  while (r !== chlen && this.matches < this.maxMatches) { r = this._sbmh_feed(chunk) }
-  return r
-}
-
-SBMH.prototype._sbmh_feed = function (data) {
-  const len = data.length
-  const needle = this._needle
-  const needleLength = needle.length
-  const lastNeedleChar = needle[needleLength - 1]
-
-  // Positive: points to a position in `data`
-  //           pos == 3 points to data[3]
-  // Negative: points to a position in the lookbehind buffer
-  //           pos == -2 points to lookbehind[lookbehind_size - 2]
-  let pos = -this._lookbehind_size
-  let ch
-
-  if (pos < 0) {
-    // Lookbehind buffer is not empty. Perform Boyer-Moore-Horspool
-    // search with character lookup code that considers both the
-    // lookbehind buffer and the current round's haystack data.
-    //
-    // Loop until
-    //   there is a match.
-    // or until
-    //   we've moved past the position that requires the
-    //   lookbehind buffer. In this case we switch to the
-    //   optimized loop.
-    // or until
-    //   the character to look at lies outside the haystack.
-    while (pos < 0 && pos <= len - needleLength) {
-      ch = this._sbmh_lookup_char(data, pos + needleLength - 1)
-
-      if (
-        ch === lastNeedleChar &&
-        this._sbmh_memcmp(data, pos, needleLength - 1)
-      ) {
-        this._lookbehind_size = 0
-        ++this.matches
-        this.emit('info', true)
-
-        return (this._bufpos = pos + needleLength)
-      }
-      pos += this._occ[ch]
-    }
-
-    // No match.
-
-    if (pos < 0) {
-      // There's too few data for Boyer-Moore-Horspool to run,
-      // so let's use a different algorithm to skip as much as
-      // we can.
-      // Forward pos until
-      //   the trailing part of lookbehind + data
-      //   looks like the beginning of the needle
-      // or until
-      //   pos == 0
-      while (pos < 0 && !this._sbmh_memcmp(data, pos, len - pos)) { ++pos }
-    }
-
-    if (pos >= 0) {
-      // Discard lookbehind buffer.
-      this.emit('info', false, this._lookbehind, 0, this._lookbehind_size)
-      this._lookbehind_size = 0
-    } else {
-      // Cut off part of the lookbehind buffer that has
-      // been processed and append the entire haystack
-      // into it.
-      const bytesToCutOff = this._lookbehind_size + pos
-      if (bytesToCutOff > 0) {
-        // The cut off data is guaranteed not to contain the needle.
-        this.emit('info', false, this._lookbehind, 0, bytesToCutOff)
-      }
-
-      this._lookbehind.copy(this._lookbehind, 0, bytesToCutOff,
-        this._lookbehind_size - bytesToCutOff)
-      this._lookbehind_size -= bytesToCutOff
-
-      data.copy(this._lookbehind, this._lookbehind_size)
-      this._lookbehind_size += len
-
-      this._bufpos = len
-      return len
-    }
-  }
-
-  pos += (pos >= 0) * this._bufpos
-
-  // Lookbehind buffer is now empty. We only need to check if the
-  // needle is in the haystack.
-  if (data.indexOf(needle, pos) !== -1) {
-    pos = data.indexOf(needle, pos)
-    ++this.matches
-    if (pos > 0) { this.emit('info', true, data, this._bufpos, pos) } else { this.emit('info', true) }
-
-    return (this._bufpos = pos + needleLength)
-  } else {
-    pos = len - needleLength
-  }
-
-  // There was no match. If there's trailing haystack data that we cannot
-  // match yet using the Boyer-Moore-Horspool algorithm (because the trailing
-  // data is less than the needle size) then match using a modified
-  // algorithm that starts matching from the beginning instead of the end.
-  // Whatever trailing data is left after running this algorithm is added to
-  // the lookbehind buffer.
-  while (
-    pos < len &&
-    (
-      data[pos] !== needle[0] ||
-      (
-        (Buffer.compare(
-          data.subarray(pos, pos + len - pos),
-          needle.subarray(0, len - pos)
-        ) !== 0)
-      )
-    )
-  ) {
-    ++pos
-  }
-  if (pos < len) {
-    data.copy(this._lookbehind, 0, pos, pos + (len - pos))
-    this._lookbehind_size = len - pos
-  }
-
-  // Everything until pos is guaranteed not to contain needle data.
-  if (pos > 0) { this.emit('info', false, data, this._bufpos, pos < len ? pos : len) }
-
-  this._bufpos = len
-  return len
-}
-
-SBMH.prototype._sbmh_lookup_char = function (data, pos) {
-  return (pos < 0)
-    ? this._lookbehind[this._lookbehind_size + pos]
-    : data[pos]
-}
-
-SBMH.prototype._sbmh_memcmp = function (data, pos, len) {
-  for (var i = 0; i < len; ++i) { // eslint-disable-line no-var
-    if (this._sbmh_lookup_char(data, pos + i) !== this._needle[i]) { return false }
-  }
-  return true
-}
-
-module.exports = SBMH
-
-
-/***/ }),
-
-/***/ 727:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-
-
-const WritableStream = (__nccwpck_require__(4492).Writable)
-const { inherits } = __nccwpck_require__(7261)
-const Dicer = __nccwpck_require__(2960)
-
-const MultipartParser = __nccwpck_require__(2183)
-const UrlencodedParser = __nccwpck_require__(8306)
-const parseParams = __nccwpck_require__(1854)
-
-function Busboy (opts) {
-  if (!(this instanceof Busboy)) { return new Busboy(opts) }
-
-  if (typeof opts !== 'object') {
-    throw new TypeError('Busboy expected an options-Object.')
-  }
-  if (typeof opts.headers !== 'object') {
-    throw new TypeError('Busboy expected an options-Object with headers-attribute.')
-  }
-  if (typeof opts.headers['content-type'] !== 'string') {
-    throw new TypeError('Missing Content-Type-header.')
-  }
-
-  const {
-    headers,
-    ...streamOptions
-  } = opts
-
-  this.opts = {
-    autoDestroy: false,
-    ...streamOptions
-  }
-  WritableStream.call(this, this.opts)
-
-  this._done = false
-  this._parser = this.getParserByHeaders(headers)
-  this._finished = false
-}
-inherits(Busboy, WritableStream)
-
-Busboy.prototype.emit = function (ev) {
-  if (ev === 'finish') {
-    if (!this._done) {
-      this._parser?.end()
-      return
-    } else if (this._finished) {
-      return
-    }
-    this._finished = true
-  }
-  WritableStream.prototype.emit.apply(this, arguments)
-}
-
-Busboy.prototype.getParserByHeaders = function (headers) {
-  const parsed = parseParams(headers['content-type'])
-
-  const cfg = {
-    defCharset: this.opts.defCharset,
-    fileHwm: this.opts.fileHwm,
-    headers,
-    highWaterMark: this.opts.highWaterMark,
-    isPartAFile: this.opts.isPartAFile,
-    limits: this.opts.limits,
-    parsedConType: parsed,
-    preservePath: this.opts.preservePath
-  }
-
-  if (MultipartParser.detect.test(parsed[0])) {
-    return new MultipartParser(this, cfg)
-  }
-  if (UrlencodedParser.detect.test(parsed[0])) {
-    return new UrlencodedParser(this, cfg)
-  }
-  throw new Error('Unsupported Content-Type.')
-}
-
-Busboy.prototype._write = function (chunk, encoding, cb) {
-  this._parser.write(chunk, cb)
-}
-
-module.exports = Busboy
-module.exports["default"] = Busboy
-module.exports.Busboy = Busboy
-
-module.exports.Dicer = Dicer
-
-
-/***/ }),
-
-/***/ 2183:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-
-
-// TODO:
-//  * support 1 nested multipart level
-//    (see second multipart example here:
-//     http://www.w3.org/TR/html401/interact/forms.html#didx-multipartform-data)
-//  * support limits.fieldNameSize
-//     -- this will require modifications to utils.parseParams
-
-const { Readable } = __nccwpck_require__(4492)
-const { inherits } = __nccwpck_require__(7261)
-
-const Dicer = __nccwpck_require__(2960)
-
-const parseParams = __nccwpck_require__(1854)
-const decodeText = __nccwpck_require__(4619)
-const basename = __nccwpck_require__(8647)
-const getLimit = __nccwpck_require__(1467)
-
-const RE_BOUNDARY = /^boundary$/i
-const RE_FIELD = /^form-data$/i
-const RE_CHARSET = /^charset$/i
-const RE_FILENAME = /^filename$/i
-const RE_NAME = /^name$/i
-
-Multipart.detect = /^multipart\/form-data/i
-function Multipart (boy, cfg) {
-  let i
-  let len
-  const self = this
-  let boundary
-  const limits = cfg.limits
-  const isPartAFile = cfg.isPartAFile || ((fieldName, contentType, fileName) => (contentType === 'application/octet-stream' || fileName !== undefined))
-  const parsedConType = cfg.parsedConType || []
-  const defCharset = cfg.defCharset || 'utf8'
-  const preservePath = cfg.preservePath
-  const fileOpts = { highWaterMark: cfg.fileHwm }
-
-  for (i = 0, len = parsedConType.length; i < len; ++i) {
-    if (Array.isArray(parsedConType[i]) &&
-      RE_BOUNDARY.test(parsedConType[i][0])) {
-      boundary = parsedConType[i][1]
-      break
-    }
-  }
-
-  function checkFinished () {
-    if (nends === 0 && finished && !boy._done) {
-      finished = false
-      self.end()
-    }
-  }
-
-  if (typeof boundary !== 'string') { throw new Error('Multipart: Boundary not found') }
-
-  const fieldSizeLimit = getLimit(limits, 'fieldSize', 1 * 1024 * 1024)
-  const fileSizeLimit = getLimit(limits, 'fileSize', Infinity)
-  const filesLimit = getLimit(limits, 'files', Infinity)
-  const fieldsLimit = getLimit(limits, 'fields', Infinity)
-  const partsLimit = getLimit(limits, 'parts', Infinity)
-  const headerPairsLimit = getLimit(limits, 'headerPairs', 2000)
-  const headerSizeLimit = getLimit(limits, 'headerSize', 80 * 1024)
-
-  let nfiles = 0
-  let nfields = 0
-  let nends = 0
-  let curFile
-  let curField
-  let finished = false
-
-  this._needDrain = false
-  this._pause = false
-  this._cb = undefined
-  this._nparts = 0
-  this._boy = boy
-
-  const parserCfg = {
-    boundary,
-    maxHeaderPairs: headerPairsLimit,
-    maxHeaderSize: headerSizeLimit,
-    partHwm: fileOpts.highWaterMark,
-    highWaterMark: cfg.highWaterMark
-  }
-
-  this.parser = new Dicer(parserCfg)
-  this.parser.on('drain', function () {
-    self._needDrain = false
-    if (self._cb && !self._pause) {
-      const cb = self._cb
-      self._cb = undefined
-      cb()
-    }
-  }).on('part', function onPart (part) {
-    if (++self._nparts > partsLimit) {
-      self.parser.removeListener('part', onPart)
-      self.parser.on('part', skipPart)
-      boy.hitPartsLimit = true
-      boy.emit('partsLimit')
-      return skipPart(part)
-    }
-
-    // hack because streams2 _always_ doesn't emit 'end' until nextTick, so let
-    // us emit 'end' early since we know the part has ended if we are already
-    // seeing the next part
-    if (curField) {
-      const field = curField
-      field.emit('end')
-      field.removeAllListeners('end')
-    }
-
-    part.on('header', function (header) {
-      let contype
-      let fieldname
-      let parsed
-      let charset
-      let encoding
-      let filename
-      let nsize = 0
-
-      if (header['content-type']) {
-        parsed = parseParams(header['content-type'][0])
-        if (parsed[0]) {
-          contype = parsed[0].toLowerCase()
-          for (i = 0, len = parsed.length; i < len; ++i) {
-            if (RE_CHARSET.test(parsed[i][0])) {
-              charset = parsed[i][1].toLowerCase()
-              break
-            }
-          }
-        }
-      }
-
-      if (contype === undefined) { contype = 'text/plain' }
-      if (charset === undefined) { charset = defCharset }
-
-      if (header['content-disposition']) {
-        parsed = parseParams(header['content-disposition'][0])
-        if (!RE_FIELD.test(parsed[0])) { return skipPart(part) }
-        for (i = 0, len = parsed.length; i < len; ++i) {
-          if (RE_NAME.test(parsed[i][0])) {
-            fieldname = parsed[i][1]
-          } else if (RE_FILENAME.test(parsed[i][0])) {
-            filename = parsed[i][1]
-            if (!preservePath) { filename = basename(filename) }
-          }
-        }
-      } else { return skipPart(part) }
-
-      if (header['content-transfer-encoding']) { encoding = header['content-transfer-encoding'][0].toLowerCase() } else { encoding = '7bit' }
-
-      let onData,
-        onEnd
-
-      if (isPartAFile(fieldname, contype, filename)) {
-        // file/binary field
-        if (nfiles === filesLimit) {
-          if (!boy.hitFilesLimit) {
-            boy.hitFilesLimit = true
-            boy.emit('filesLimit')
-          }
-          return skipPart(part)
-        }
-
-        ++nfiles
-
-        if (boy.listenerCount('file') === 0) {
-          self.parser._ignore()
-          return
-        }
-
-        ++nends
-        const file = new FileStream(fileOpts)
-        curFile = file
-        file.on('end', function () {
-          --nends
-          self._pause = false
-          checkFinished()
-          if (self._cb && !self._needDrain) {
-            const cb = self._cb
-            self._cb = undefined
-            cb()
-          }
-        })
-        file._read = function (n) {
-          if (!self._pause) { return }
-          self._pause = false
-          if (self._cb && !self._needDrain) {
-            const cb = self._cb
-            self._cb = undefined
-            cb()
-          }
-        }
-        boy.emit('file', fieldname, file, filename, encoding, contype)
-
-        onData = function (data) {
-          if ((nsize += data.length) > fileSizeLimit) {
-            const extralen = fileSizeLimit - nsize + data.length
-            if (extralen > 0) { file.push(data.slice(0, extralen)) }
-            file.truncated = true
-            file.bytesRead = fileSizeLimit
-            part.removeAllListeners('data')
-            file.emit('limit')
-            return
-          } else if (!file.push(data)) { self._pause = true }
-
-          file.bytesRead = nsize
-        }
-
-        onEnd = function () {
-          curFile = undefined
-          file.push(null)
-        }
-      } else {
-        // non-file field
-        if (nfields === fieldsLimit) {
-          if (!boy.hitFieldsLimit) {
-            boy.hitFieldsLimit = true
-            boy.emit('fieldsLimit')
-          }
-          return skipPart(part)
-        }
-
-        ++nfields
-        ++nends
-        let buffer = ''
-        let truncated = false
-        curField = part
-
-        onData = function (data) {
-          if ((nsize += data.length) > fieldSizeLimit) {
-            const extralen = (fieldSizeLimit - (nsize - data.length))
-            buffer += data.toString('binary', 0, extralen)
-            truncated = true
-            part.removeAllListeners('data')
-          } else { buffer += data.toString('binary') }
-        }
-
-        onEnd = function () {
-          curField = undefined
-          if (buffer.length) { buffer = decodeText(buffer, 'binary', charset) }
-          boy.emit('field', fieldname, buffer, false, truncated, encoding, contype)
-          --nends
-          checkFinished()
-        }
-      }
-
-      /* As of node@2efe4ab761666 (v0.10.29+/v0.11.14+), busboy had become
-         broken. Streams2/streams3 is a huge black box of confusion, but
-         somehow overriding the sync state seems to fix things again (and still
-         seems to work for previous node versions).
-      */
-      part._readableState.sync = false
-
-      part.on('data', onData)
-      part.on('end', onEnd)
-    }).on('error', function (err) {
-      if (curFile) { curFile.emit('error', err) }
-    })
-  }).on('error', function (err) {
-    boy.emit('error', err)
-  }).on('finish', function () {
-    finished = true
-    checkFinished()
-  })
-}
-
-Multipart.prototype.write = function (chunk, cb) {
-  const r = this.parser.write(chunk)
-  if (r && !this._pause) {
-    cb()
-  } else {
-    this._needDrain = !r
-    this._cb = cb
-  }
-}
-
-Multipart.prototype.end = function () {
-  const self = this
-
-  if (self.parser.writable) {
-    self.parser.end()
-  } else if (!self._boy._done) {
-    process.nextTick(function () {
-      self._boy._done = true
-      self._boy.emit('finish')
-    })
-  }
-}
-
-function skipPart (part) {
-  part.resume()
-}
-
-function FileStream (opts) {
-  Readable.call(this, opts)
-
-  this.bytesRead = 0
-
-  this.truncated = false
-}
-
-inherits(FileStream, Readable)
-
-FileStream.prototype._read = function (n) {}
-
-module.exports = Multipart
-
-
-/***/ }),
-
-/***/ 8306:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-
-
-const Decoder = __nccwpck_require__(7100)
-const decodeText = __nccwpck_require__(4619)
-const getLimit = __nccwpck_require__(1467)
-
-const RE_CHARSET = /^charset$/i
-
-UrlEncoded.detect = /^application\/x-www-form-urlencoded/i
-function UrlEncoded (boy, cfg) {
-  const limits = cfg.limits
-  const parsedConType = cfg.parsedConType
-  this.boy = boy
-
-  this.fieldSizeLimit = getLimit(limits, 'fieldSize', 1 * 1024 * 1024)
-  this.fieldNameSizeLimit = getLimit(limits, 'fieldNameSize', 100)
-  this.fieldsLimit = getLimit(limits, 'fields', Infinity)
-
-  let charset
-  for (var i = 0, len = parsedConType.length; i < len; ++i) { // eslint-disable-line no-var
-    if (Array.isArray(parsedConType[i]) &&
-        RE_CHARSET.test(parsedConType[i][0])) {
-      charset = parsedConType[i][1].toLowerCase()
-      break
-    }
-  }
-
-  if (charset === undefined) { charset = cfg.defCharset || 'utf8' }
-
-  this.decoder = new Decoder()
-  this.charset = charset
-  this._fields = 0
-  this._state = 'key'
-  this._checkingBytes = true
-  this._bytesKey = 0
-  this._bytesVal = 0
-  this._key = ''
-  this._val = ''
-  this._keyTrunc = false
-  this._valTrunc = false
-  this._hitLimit = false
-}
-
-UrlEncoded.prototype.write = function (data, cb) {
-  if (this._fields === this.fieldsLimit) {
-    if (!this.boy.hitFieldsLimit) {
-      this.boy.hitFieldsLimit = true
-      this.boy.emit('fieldsLimit')
-    }
-    return cb()
-  }
-
-  let idxeq; let idxamp; let i; let p = 0; const len = data.length
-
-  while (p < len) {
-    if (this._state === 'key') {
-      idxeq = idxamp = undefined
-      for (i = p; i < len; ++i) {
-        if (!this._checkingBytes) { ++p }
-        if (data[i] === 0x3D/* = */) {
-          idxeq = i
-          break
-        } else if (data[i] === 0x26/* & */) {
-          idxamp = i
-          break
-        }
-        if (this._checkingBytes && this._bytesKey === this.fieldNameSizeLimit) {
-          this._hitLimit = true
-          break
-        } else if (this._checkingBytes) { ++this._bytesKey }
-      }
-
-      if (idxeq !== undefined) {
-        // key with assignment
-        if (idxeq > p) { this._key += this.decoder.write(data.toString('binary', p, idxeq)) }
-        this._state = 'val'
-
-        this._hitLimit = false
-        this._checkingBytes = true
-        this._val = ''
-        this._bytesVal = 0
-        this._valTrunc = false
-        this.decoder.reset()
-
-        p = idxeq + 1
-      } else if (idxamp !== undefined) {
-        // key with no assignment
-        ++this._fields
-        let key; const keyTrunc = this._keyTrunc
-        if (idxamp > p) { key = (this._key += this.decoder.write(data.toString('binary', p, idxamp))) } else { key = this._key }
-
-        this._hitLimit = false
-        this._checkingBytes = true
-        this._key = ''
-        this._bytesKey = 0
-        this._keyTrunc = false
-        this.decoder.reset()
-
-        if (key.length) {
-          this.boy.emit('field', decodeText(key, 'binary', this.charset),
-            '',
-            keyTrunc,
-            false)
-        }
-
-        p = idxamp + 1
-        if (this._fields === this.fieldsLimit) { return cb() }
-      } else if (this._hitLimit) {
-        // we may not have hit the actual limit if there are encoded bytes...
-        if (i > p) { this._key += this.decoder.write(data.toString('binary', p, i)) }
-        p = i
-        if ((this._bytesKey = this._key.length) === this.fieldNameSizeLimit) {
-          // yep, we actually did hit the limit
-          this._checkingBytes = false
-          this._keyTrunc = true
-        }
-      } else {
-        if (p < len) { this._key += this.decoder.write(data.toString('binary', p)) }
-        p = len
-      }
-    } else {
-      idxamp = undefined
-      for (i = p; i < len; ++i) {
-        if (!this._checkingBytes) { ++p }
-        if (data[i] === 0x26/* & */) {
-          idxamp = i
-          break
-        }
-        if (this._checkingBytes && this._bytesVal === this.fieldSizeLimit) {
-          this._hitLimit = true
-          break
-        } else if (this._checkingBytes) { ++this._bytesVal }
-      }
-
-      if (idxamp !== undefined) {
-        ++this._fields
-        if (idxamp > p) { this._val += this.decoder.write(data.toString('binary', p, idxamp)) }
-        this.boy.emit('field', decodeText(this._key, 'binary', this.charset),
-          decodeText(this._val, 'binary', this.charset),
-          this._keyTrunc,
-          this._valTrunc)
-        this._state = 'key'
-
-        this._hitLimit = false
-        this._checkingBytes = true
-        this._key = ''
-        this._bytesKey = 0
-        this._keyTrunc = false
-        this.decoder.reset()
-
-        p = idxamp + 1
-        if (this._fields === this.fieldsLimit) { return cb() }
-      } else if (this._hitLimit) {
-        // we may not have hit the actual limit if there are encoded bytes...
-        if (i > p) { this._val += this.decoder.write(data.toString('binary', p, i)) }
-        p = i
-        if ((this._val === '' && this.fieldSizeLimit === 0) ||
-            (this._bytesVal = this._val.length) === this.fieldSizeLimit) {
-          // yep, we actually did hit the limit
-          this._checkingBytes = false
-          this._valTrunc = true
-        }
-      } else {
-        if (p < len) { this._val += this.decoder.write(data.toString('binary', p)) }
-        p = len
-      }
-    }
-  }
-  cb()
-}
-
-UrlEncoded.prototype.end = function () {
-  if (this.boy._done) { return }
-
-  if (this._state === 'key' && this._key.length > 0) {
-    this.boy.emit('field', decodeText(this._key, 'binary', this.charset),
-      '',
-      this._keyTrunc,
-      false)
-  } else if (this._state === 'val') {
-    this.boy.emit('field', decodeText(this._key, 'binary', this.charset),
-      decodeText(this._val, 'binary', this.charset),
-      this._keyTrunc,
-      this._valTrunc)
-  }
-  this.boy._done = true
-  this.boy.emit('finish')
-}
-
-module.exports = UrlEncoded
-
-
-/***/ }),
-
-/***/ 7100:
-/***/ ((module) => {
-
-
-
-const RE_PLUS = /\+/g
-
-const HEX = [
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0,
-  0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-]
-
-function Decoder () {
-  this.buffer = undefined
-}
-Decoder.prototype.write = function (str) {
-  // Replace '+' with ' ' before decoding
-  str = str.replace(RE_PLUS, ' ')
-  let res = ''
-  let i = 0; let p = 0; const len = str.length
-  for (; i < len; ++i) {
-    if (this.buffer !== undefined) {
-      if (!HEX[str.charCodeAt(i)]) {
-        res += '%' + this.buffer
-        this.buffer = undefined
-        --i // retry character
-      } else {
-        this.buffer += str[i]
-        ++p
-        if (this.buffer.length === 2) {
-          res += String.fromCharCode(parseInt(this.buffer, 16))
-          this.buffer = undefined
-        }
-      }
-    } else if (str[i] === '%') {
-      if (i > p) {
-        res += str.substring(p, i)
-        p = i
-      }
-      this.buffer = ''
-      ++p
-    }
-  }
-  if (p < len && this.buffer === undefined) { res += str.substring(p) }
-  return res
-}
-Decoder.prototype.reset = function () {
-  this.buffer = undefined
-}
-
-module.exports = Decoder
-
-
-/***/ }),
-
-/***/ 8647:
-/***/ ((module) => {
-
-
-
-module.exports = function basename (path) {
-  if (typeof path !== 'string') { return '' }
-  for (var i = path.length - 1; i >= 0; --i) { // eslint-disable-line no-var
-    switch (path.charCodeAt(i)) {
-      case 0x2F: // '/'
-      case 0x5C: // '\'
-        path = path.slice(i + 1)
-        return (path === '..' || path === '.' ? '' : path)
-    }
-  }
-  return (path === '..' || path === '.' ? '' : path)
-}
-
-
-/***/ }),
-
-/***/ 4619:
-/***/ (function(module) {
-
-
-
-// Node has always utf-8
-const utf8Decoder = new TextDecoder('utf-8')
-const textDecoders = new Map([
-  ['utf-8', utf8Decoder],
-  ['utf8', utf8Decoder]
-])
-
-function getDecoder (charset) {
-  let lc
-  while (true) {
-    switch (charset) {
-      case 'utf-8':
-      case 'utf8':
-        return decoders.utf8
-      case 'latin1':
-      case 'ascii': // TODO: Make these a separate, strict decoder?
-      case 'us-ascii':
-      case 'iso-8859-1':
-      case 'iso8859-1':
-      case 'iso88591':
-      case 'iso_8859-1':
-      case 'windows-1252':
-      case 'iso_8859-1:1987':
-      case 'cp1252':
-      case 'x-cp1252':
-        return decoders.latin1
-      case 'utf16le':
-      case 'utf-16le':
-      case 'ucs2':
-      case 'ucs-2':
-        return decoders.utf16le
-      case 'base64':
-        return decoders.base64
-      default:
-        if (lc === undefined) {
-          lc = true
-          charset = charset.toLowerCase()
-          continue
-        }
-        return decoders.other.bind(charset)
-    }
-  }
-}
-
-const decoders = {
-  utf8: (data, sourceEncoding) => {
-    if (data.length === 0) {
-      return ''
-    }
-    if (typeof data === 'string') {
-      data = Buffer.from(data, sourceEncoding)
-    }
-    return data.utf8Slice(0, data.length)
-  },
-
-  latin1: (data, sourceEncoding) => {
-    if (data.length === 0) {
-      return ''
-    }
-    if (typeof data === 'string') {
-      return data
-    }
-    return data.latin1Slice(0, data.length)
-  },
-
-  utf16le: (data, sourceEncoding) => {
-    if (data.length === 0) {
-      return ''
-    }
-    if (typeof data === 'string') {
-      data = Buffer.from(data, sourceEncoding)
-    }
-    return data.ucs2Slice(0, data.length)
-  },
-
-  base64: (data, sourceEncoding) => {
-    if (data.length === 0) {
-      return ''
-    }
-    if (typeof data === 'string') {
-      data = Buffer.from(data, sourceEncoding)
-    }
-    return data.base64Slice(0, data.length)
-  },
-
-  other: (data, sourceEncoding) => {
-    if (data.length === 0) {
-      return ''
-    }
-    if (typeof data === 'string') {
-      data = Buffer.from(data, sourceEncoding)
-    }
-
-    if (textDecoders.has(this.toString())) {
-      try {
-        return textDecoders.get(this).decode(data)
-      } catch {}
-    }
-    return typeof data === 'string'
-      ? data
-      : data.toString()
-  }
-}
-
-function decodeText (text, sourceEncoding, destEncoding) {
-  if (text) {
-    return getDecoder(destEncoding)(text, sourceEncoding)
-  }
-  return text
-}
-
-module.exports = decodeText
-
-
-/***/ }),
-
-/***/ 1467:
-/***/ ((module) => {
-
-
-
-module.exports = function getLimit (limits, name, defaultLimit) {
-  if (
-    !limits ||
-    limits[name] === undefined ||
-    limits[name] === null
-  ) { return defaultLimit }
-
-  if (
-    typeof limits[name] !== 'number' ||
-    isNaN(limits[name])
-  ) { throw new TypeError('Limit ' + name + ' is not a valid number') }
-
-  return limits[name]
-}
-
-
-/***/ }),
-
-/***/ 1854:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-/* eslint-disable object-property-newline */
-
-
-const decodeText = __nccwpck_require__(4619)
-
-const RE_ENCODED = /%[a-fA-F0-9][a-fA-F0-9]/g
-
-const EncodedLookup = {
-  '%00': '\x00', '%01': '\x01', '%02': '\x02', '%03': '\x03', '%04': '\x04',
-  '%05': '\x05', '%06': '\x06', '%07': '\x07', '%08': '\x08', '%09': '\x09',
-  '%0a': '\x0a', '%0A': '\x0a', '%0b': '\x0b', '%0B': '\x0b', '%0c': '\x0c',
-  '%0C': '\x0c', '%0d': '\x0d', '%0D': '\x0d', '%0e': '\x0e', '%0E': '\x0e',
-  '%0f': '\x0f', '%0F': '\x0f', '%10': '\x10', '%11': '\x11', '%12': '\x12',
-  '%13': '\x13', '%14': '\x14', '%15': '\x15', '%16': '\x16', '%17': '\x17',
-  '%18': '\x18', '%19': '\x19', '%1a': '\x1a', '%1A': '\x1a', '%1b': '\x1b',
-  '%1B': '\x1b', '%1c': '\x1c', '%1C': '\x1c', '%1d': '\x1d', '%1D': '\x1d',
-  '%1e': '\x1e', '%1E': '\x1e', '%1f': '\x1f', '%1F': '\x1f', '%20': '\x20',
-  '%21': '\x21', '%22': '\x22', '%23': '\x23', '%24': '\x24', '%25': '\x25',
-  '%26': '\x26', '%27': '\x27', '%28': '\x28', '%29': '\x29', '%2a': '\x2a',
-  '%2A': '\x2a', '%2b': '\x2b', '%2B': '\x2b', '%2c': '\x2c', '%2C': '\x2c',
-  '%2d': '\x2d', '%2D': '\x2d', '%2e': '\x2e', '%2E': '\x2e', '%2f': '\x2f',
-  '%2F': '\x2f', '%30': '\x30', '%31': '\x31', '%32': '\x32', '%33': '\x33',
-  '%34': '\x34', '%35': '\x35', '%36': '\x36', '%37': '\x37', '%38': '\x38',
-  '%39': '\x39', '%3a': '\x3a', '%3A': '\x3a', '%3b': '\x3b', '%3B': '\x3b',
-  '%3c': '\x3c', '%3C': '\x3c', '%3d': '\x3d', '%3D': '\x3d', '%3e': '\x3e',
-  '%3E': '\x3e', '%3f': '\x3f', '%3F': '\x3f', '%40': '\x40', '%41': '\x41',
-  '%42': '\x42', '%43': '\x43', '%44': '\x44', '%45': '\x45', '%46': '\x46',
-  '%47': '\x47', '%48': '\x48', '%49': '\x49', '%4a': '\x4a', '%4A': '\x4a',
-  '%4b': '\x4b', '%4B': '\x4b', '%4c': '\x4c', '%4C': '\x4c', '%4d': '\x4d',
-  '%4D': '\x4d', '%4e': '\x4e', '%4E': '\x4e', '%4f': '\x4f', '%4F': '\x4f',
-  '%50': '\x50', '%51': '\x51', '%52': '\x52', '%53': '\x53', '%54': '\x54',
-  '%55': '\x55', '%56': '\x56', '%57': '\x57', '%58': '\x58', '%59': '\x59',
-  '%5a': '\x5a', '%5A': '\x5a', '%5b': '\x5b', '%5B': '\x5b', '%5c': '\x5c',
-  '%5C': '\x5c', '%5d': '\x5d', '%5D': '\x5d', '%5e': '\x5e', '%5E': '\x5e',
-  '%5f': '\x5f', '%5F': '\x5f', '%60': '\x60', '%61': '\x61', '%62': '\x62',
-  '%63': '\x63', '%64': '\x64', '%65': '\x65', '%66': '\x66', '%67': '\x67',
-  '%68': '\x68', '%69': '\x69', '%6a': '\x6a', '%6A': '\x6a', '%6b': '\x6b',
-  '%6B': '\x6b', '%6c': '\x6c', '%6C': '\x6c', '%6d': '\x6d', '%6D': '\x6d',
-  '%6e': '\x6e', '%6E': '\x6e', '%6f': '\x6f', '%6F': '\x6f', '%70': '\x70',
-  '%71': '\x71', '%72': '\x72', '%73': '\x73', '%74': '\x74', '%75': '\x75',
-  '%76': '\x76', '%77': '\x77', '%78': '\x78', '%79': '\x79', '%7a': '\x7a',
-  '%7A': '\x7a', '%7b': '\x7b', '%7B': '\x7b', '%7c': '\x7c', '%7C': '\x7c',
-  '%7d': '\x7d', '%7D': '\x7d', '%7e': '\x7e', '%7E': '\x7e', '%7f': '\x7f',
-  '%7F': '\x7f', '%80': '\x80', '%81': '\x81', '%82': '\x82', '%83': '\x83',
-  '%84': '\x84', '%85': '\x85', '%86': '\x86', '%87': '\x87', '%88': '\x88',
-  '%89': '\x89', '%8a': '\x8a', '%8A': '\x8a', '%8b': '\x8b', '%8B': '\x8b',
-  '%8c': '\x8c', '%8C': '\x8c', '%8d': '\x8d', '%8D': '\x8d', '%8e': '\x8e',
-  '%8E': '\x8e', '%8f': '\x8f', '%8F': '\x8f', '%90': '\x90', '%91': '\x91',
-  '%92': '\x92', '%93': '\x93', '%94': '\x94', '%95': '\x95', '%96': '\x96',
-  '%97': '\x97', '%98': '\x98', '%99': '\x99', '%9a': '\x9a', '%9A': '\x9a',
-  '%9b': '\x9b', '%9B': '\x9b', '%9c': '\x9c', '%9C': '\x9c', '%9d': '\x9d',
-  '%9D': '\x9d', '%9e': '\x9e', '%9E': '\x9e', '%9f': '\x9f', '%9F': '\x9f',
-  '%a0': '\xa0', '%A0': '\xa0', '%a1': '\xa1', '%A1': '\xa1', '%a2': '\xa2',
-  '%A2': '\xa2', '%a3': '\xa3', '%A3': '\xa3', '%a4': '\xa4', '%A4': '\xa4',
-  '%a5': '\xa5', '%A5': '\xa5', '%a6': '\xa6', '%A6': '\xa6', '%a7': '\xa7',
-  '%A7': '\xa7', '%a8': '\xa8', '%A8': '\xa8', '%a9': '\xa9', '%A9': '\xa9',
-  '%aa': '\xaa', '%Aa': '\xaa', '%aA': '\xaa', '%AA': '\xaa', '%ab': '\xab',
-  '%Ab': '\xab', '%aB': '\xab', '%AB': '\xab', '%ac': '\xac', '%Ac': '\xac',
-  '%aC': '\xac', '%AC': '\xac', '%ad': '\xad', '%Ad': '\xad', '%aD': '\xad',
-  '%AD': '\xad', '%ae': '\xae', '%Ae': '\xae', '%aE': '\xae', '%AE': '\xae',
-  '%af': '\xaf', '%Af': '\xaf', '%aF': '\xaf', '%AF': '\xaf', '%b0': '\xb0',
-  '%B0': '\xb0', '%b1': '\xb1', '%B1': '\xb1', '%b2': '\xb2', '%B2': '\xb2',
-  '%b3': '\xb3', '%B3': '\xb3', '%b4': '\xb4', '%B4': '\xb4', '%b5': '\xb5',
-  '%B5': '\xb5', '%b6': '\xb6', '%B6': '\xb6', '%b7': '\xb7', '%B7': '\xb7',
-  '%b8': '\xb8', '%B8': '\xb8', '%b9': '\xb9', '%B9': '\xb9', '%ba': '\xba',
-  '%Ba': '\xba', '%bA': '\xba', '%BA': '\xba', '%bb': '\xbb', '%Bb': '\xbb',
-  '%bB': '\xbb', '%BB': '\xbb', '%bc': '\xbc', '%Bc': '\xbc', '%bC': '\xbc',
-  '%BC': '\xbc', '%bd': '\xbd', '%Bd': '\xbd', '%bD': '\xbd', '%BD': '\xbd',
-  '%be': '\xbe', '%Be': '\xbe', '%bE': '\xbe', '%BE': '\xbe', '%bf': '\xbf',
-  '%Bf': '\xbf', '%bF': '\xbf', '%BF': '\xbf', '%c0': '\xc0', '%C0': '\xc0',
-  '%c1': '\xc1', '%C1': '\xc1', '%c2': '\xc2', '%C2': '\xc2', '%c3': '\xc3',
-  '%C3': '\xc3', '%c4': '\xc4', '%C4': '\xc4', '%c5': '\xc5', '%C5': '\xc5',
-  '%c6': '\xc6', '%C6': '\xc6', '%c7': '\xc7', '%C7': '\xc7', '%c8': '\xc8',
-  '%C8': '\xc8', '%c9': '\xc9', '%C9': '\xc9', '%ca': '\xca', '%Ca': '\xca',
-  '%cA': '\xca', '%CA': '\xca', '%cb': '\xcb', '%Cb': '\xcb', '%cB': '\xcb',
-  '%CB': '\xcb', '%cc': '\xcc', '%Cc': '\xcc', '%cC': '\xcc', '%CC': '\xcc',
-  '%cd': '\xcd', '%Cd': '\xcd', '%cD': '\xcd', '%CD': '\xcd', '%ce': '\xce',
-  '%Ce': '\xce', '%cE': '\xce', '%CE': '\xce', '%cf': '\xcf', '%Cf': '\xcf',
-  '%cF': '\xcf', '%CF': '\xcf', '%d0': '\xd0', '%D0': '\xd0', '%d1': '\xd1',
-  '%D1': '\xd1', '%d2': '\xd2', '%D2': '\xd2', '%d3': '\xd3', '%D3': '\xd3',
-  '%d4': '\xd4', '%D4': '\xd4', '%d5': '\xd5', '%D5': '\xd5', '%d6': '\xd6',
-  '%D6': '\xd6', '%d7': '\xd7', '%D7': '\xd7', '%d8': '\xd8', '%D8': '\xd8',
-  '%d9': '\xd9', '%D9': '\xd9', '%da': '\xda', '%Da': '\xda', '%dA': '\xda',
-  '%DA': '\xda', '%db': '\xdb', '%Db': '\xdb', '%dB': '\xdb', '%DB': '\xdb',
-  '%dc': '\xdc', '%Dc': '\xdc', '%dC': '\xdc', '%DC': '\xdc', '%dd': '\xdd',
-  '%Dd': '\xdd', '%dD': '\xdd', '%DD': '\xdd', '%de': '\xde', '%De': '\xde',
-  '%dE': '\xde', '%DE': '\xde', '%df': '\xdf', '%Df': '\xdf', '%dF': '\xdf',
-  '%DF': '\xdf', '%e0': '\xe0', '%E0': '\xe0', '%e1': '\xe1', '%E1': '\xe1',
-  '%e2': '\xe2', '%E2': '\xe2', '%e3': '\xe3', '%E3': '\xe3', '%e4': '\xe4',
-  '%E4': '\xe4', '%e5': '\xe5', '%E5': '\xe5', '%e6': '\xe6', '%E6': '\xe6',
-  '%e7': '\xe7', '%E7': '\xe7', '%e8': '\xe8', '%E8': '\xe8', '%e9': '\xe9',
-  '%E9': '\xe9', '%ea': '\xea', '%Ea': '\xea', '%eA': '\xea', '%EA': '\xea',
-  '%eb': '\xeb', '%Eb': '\xeb', '%eB': '\xeb', '%EB': '\xeb', '%ec': '\xec',
-  '%Ec': '\xec', '%eC': '\xec', '%EC': '\xec', '%ed': '\xed', '%Ed': '\xed',
-  '%eD': '\xed', '%ED': '\xed', '%ee': '\xee', '%Ee': '\xee', '%eE': '\xee',
-  '%EE': '\xee', '%ef': '\xef', '%Ef': '\xef', '%eF': '\xef', '%EF': '\xef',
-  '%f0': '\xf0', '%F0': '\xf0', '%f1': '\xf1', '%F1': '\xf1', '%f2': '\xf2',
-  '%F2': '\xf2', '%f3': '\xf3', '%F3': '\xf3', '%f4': '\xf4', '%F4': '\xf4',
-  '%f5': '\xf5', '%F5': '\xf5', '%f6': '\xf6', '%F6': '\xf6', '%f7': '\xf7',
-  '%F7': '\xf7', '%f8': '\xf8', '%F8': '\xf8', '%f9': '\xf9', '%F9': '\xf9',
-  '%fa': '\xfa', '%Fa': '\xfa', '%fA': '\xfa', '%FA': '\xfa', '%fb': '\xfb',
-  '%Fb': '\xfb', '%fB': '\xfb', '%FB': '\xfb', '%fc': '\xfc', '%Fc': '\xfc',
-  '%fC': '\xfc', '%FC': '\xfc', '%fd': '\xfd', '%Fd': '\xfd', '%fD': '\xfd',
-  '%FD': '\xfd', '%fe': '\xfe', '%Fe': '\xfe', '%fE': '\xfe', '%FE': '\xfe',
-  '%ff': '\xff', '%Ff': '\xff', '%fF': '\xff', '%FF': '\xff'
-}
-
-function encodedReplacer (match) {
-  return EncodedLookup[match]
-}
-
-const STATE_KEY = 0
-const STATE_VALUE = 1
-const STATE_CHARSET = 2
-const STATE_LANG = 3
-
-function parseParams (str) {
-  const res = []
-  let state = STATE_KEY
-  let charset = ''
-  let inquote = false
-  let escaping = false
-  let p = 0
-  let tmp = ''
-  const len = str.length
-
-  for (var i = 0; i < len; ++i) { // eslint-disable-line no-var
-    const char = str[i]
-    if (char === '\\' && inquote) {
-      if (escaping) { escaping = false } else {
-        escaping = true
-        continue
-      }
-    } else if (char === '"') {
-      if (!escaping) {
-        if (inquote) {
-          inquote = false
-          state = STATE_KEY
-        } else { inquote = true }
-        continue
-      } else { escaping = false }
-    } else {
-      if (escaping && inquote) { tmp += '\\' }
-      escaping = false
-      if ((state === STATE_CHARSET || state === STATE_LANG) && char === "'") {
-        if (state === STATE_CHARSET) {
-          state = STATE_LANG
-          charset = tmp.substring(1)
-        } else { state = STATE_VALUE }
-        tmp = ''
-        continue
-      } else if (state === STATE_KEY &&
-        (char === '*' || char === '=') &&
-        res.length) {
-        state = char === '*'
-          ? STATE_CHARSET
-          : STATE_VALUE
-        res[p] = [tmp, undefined]
-        tmp = ''
-        continue
-      } else if (!inquote && char === ';') {
-        state = STATE_KEY
-        if (charset) {
-          if (tmp.length) {
-            tmp = decodeText(tmp.replace(RE_ENCODED, encodedReplacer),
-              'binary',
-              charset)
-          }
-          charset = ''
-        } else if (tmp.length) {
-          tmp = decodeText(tmp, 'binary', 'utf8')
-        }
-        if (res[p] === undefined) { res[p] = tmp } else { res[p][1] = tmp }
-        tmp = ''
-        ++p
-        continue
-      } else if (!inquote && (char === ' ' || char === '\t')) { continue }
-    }
-    tmp += char
-  }
-  if (charset && tmp.length) {
-    tmp = decodeText(tmp.replace(RE_ENCODED, encodedReplacer),
-      'binary',
-      charset)
-  } else if (tmp) {
-    tmp = decodeText(tmp, 'binary', 'utf8')
-  }
-
-  if (res[p] === undefined) {
-    if (tmp) { res[p] = tmp }
-  } else { res[p][1] = tmp }
-
-  return res
-}
-
-module.exports = parseParams
-
-
-/***/ }),
-
-/***/ 6371:
-/***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __nccwpck_require__) => {
+/***/ 465:
+/***/ ((__unused_webpack_module, __webpack_exports__, __nccwpck_require__) => {
 
 
 // EXPORTS
@@ -56147,6 +54728,7 @@ __nccwpck_require__.d(__webpack_exports__, {
 
 // EXTERNAL MODULE: external "node:process"
 var external_node_process_ = __nccwpck_require__(7742);
+var external_node_process_default = /*#__PURE__*/__nccwpck_require__.n(external_node_process_);
 ;// CONCATENATED MODULE: ./node_modules/universal-user-agent/index.js
 function getUserAgent() {
   if (typeof navigator === "object" && "userAgent" in navigator) {
@@ -59763,7 +58345,7 @@ function getApiBaseUrl() {
 }
 
 
-;// CONCATENATED MODULE: ./lib/get-download-link.js
+;// CONCATENATED MODULE: ./src/get-download-link.ts
 
 // eslint-disable-next-line import/no-unresolved
 
@@ -59796,17 +58378,17 @@ async function getDownloadLink(version = "latest", platform = "host", architectu
  * @returns {string} - platform of the current host (either linux, macOS, or windows)
  */
 function determinePlatform() {
-    if (external_node_process_.platform === "linux") {
+    if ((external_node_process_default()).platform === "linux") {
         return "linux";
     }
-    else if (external_node_process_.platform === "darwin") {
+    else if ((external_node_process_default()).platform === "darwin") {
         return "macOS";
     }
-    else if (external_node_process_.platform === "win32") {
+    else if ((external_node_process_default()).platform === "win32") {
         return "windows";
     }
     else {
-        throw new Error(`Unsupported platform: ${external_node_process_.platform}`);
+        throw new Error(`Unsupported platform: ${(external_node_process_default()).platform}`);
     }
 }
 /**
@@ -59814,14 +58396,14 @@ function determinePlatform() {
  * @returns {string} - architecture of the current host (either x64 or arm64)
  */
 function determineArchitecture() {
-    if (external_node_process_.arch === "x64") {
+    if ((external_node_process_default()).arch === "x64") {
         return "x64";
     }
-    else if (external_node_process_.arch === "arm64") {
+    else if ((external_node_process_default()).arch === "arm64") {
         return "arm64";
     }
     else {
-        throw new Error(`Unsupported architecture: ${external_node_process_.arch}`);
+        throw new Error(`Unsupported architecture: ${(external_node_process_default()).arch}`);
     }
 }
 /**
@@ -59871,17 +58453,23 @@ function findAsset(assets, version, platform, architecture) {
 
 /***/ }),
 
-/***/ 2092:
-/***/ ((__webpack_module__, __unused_webpack___webpack_exports__, __nccwpck_require__) => {
+/***/ 399:
+/***/ ((module, __unused_webpack___webpack_exports__, __nccwpck_require__) => {
 
-__nccwpck_require__.a(__webpack_module__, async (__webpack_handle_async_dependencies__, __webpack_async_result__) => { try {
+__nccwpck_require__.a(module, async (__webpack_handle_async_dependencies__, __webpack_async_result__) => { try {
 /* harmony import */ var _actions_core__WEBPACK_IMPORTED_MODULE_0__ = __nccwpck_require__(2186);
+/* harmony import */ var _actions_core__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__nccwpck_require__.n(_actions_core__WEBPACK_IMPORTED_MODULE_0__);
 /* harmony import */ var _actions_exec__WEBPACK_IMPORTED_MODULE_1__ = __nccwpck_require__(1514);
+/* harmony import */ var _actions_exec__WEBPACK_IMPORTED_MODULE_1___default = /*#__PURE__*/__nccwpck_require__.n(_actions_exec__WEBPACK_IMPORTED_MODULE_1__);
 /* harmony import */ var _actions_io__WEBPACK_IMPORTED_MODULE_2__ = __nccwpck_require__(7436);
+/* harmony import */ var _actions_io__WEBPACK_IMPORTED_MODULE_2___default = /*#__PURE__*/__nccwpck_require__.n(_actions_io__WEBPACK_IMPORTED_MODULE_2__);
 /* harmony import */ var _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__ = __nccwpck_require__(7784);
-/* harmony import */ var _get_download_link_js__WEBPACK_IMPORTED_MODULE_4__ = __nccwpck_require__(6371);
+/* harmony import */ var _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3___default = /*#__PURE__*/__nccwpck_require__.n(_actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__);
+/* harmony import */ var _get_download_link_js__WEBPACK_IMPORTED_MODULE_4__ = __nccwpck_require__(465);
 /* harmony import */ var node_path__WEBPACK_IMPORTED_MODULE_5__ = __nccwpck_require__(9411);
+/* harmony import */ var node_path__WEBPACK_IMPORTED_MODULE_5___default = /*#__PURE__*/__nccwpck_require__.n(node_path__WEBPACK_IMPORTED_MODULE_5__);
 /* harmony import */ var node_process__WEBPACK_IMPORTED_MODULE_6__ = __nccwpck_require__(7742);
+/* harmony import */ var node_process__WEBPACK_IMPORTED_MODULE_6___default = /*#__PURE__*/__nccwpck_require__.n(node_process__WEBPACK_IMPORTED_MODULE_6__);
 /*eslint import/no-unresolved: [2, { ignore: ['\\get-download-link.js$'] }]*/
 
 
@@ -59904,25 +58492,25 @@ async function run() {
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug(`==> Downloading Z3 asset: ${url.path}`);
     const file = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__.downloadTool(`${url.path}`);
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Extracting Z3 asset");
-    const dir = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__.extractZip(node_path__WEBPACK_IMPORTED_MODULE_5__.resolve(file));
+    const dir = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__.extractZip(node_path__WEBPACK_IMPORTED_MODULE_5___default().resolve(file));
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to tool cache");
     const cachedPath = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__.cacheDir(dir, "z3", version);
-    const z3Root = node_path__WEBPACK_IMPORTED_MODULE_5__.join(cachedPath, `${url.asset.replace(/\.zip$/, "")}`);
+    const z3Root = node_path__WEBPACK_IMPORTED_MODULE_5___default().join(cachedPath, `${url.asset.replace(/\.zip$/, "")}`);
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.setOutput("z3-root", z3Root);
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to PATH");
-    _actions_core__WEBPACK_IMPORTED_MODULE_0__.addPath(node_path__WEBPACK_IMPORTED_MODULE_5__.join(z3Root, "bin"));
+    _actions_core__WEBPACK_IMPORTED_MODULE_0__.addPath(node_path__WEBPACK_IMPORTED_MODULE_5___default().join(z3Root, "bin"));
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Exporting Z3_ROOT");
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.exportVariable("Z3_ROOT", z3Root);
-    if (node_process__WEBPACK_IMPORTED_MODULE_6__.platform === "darwin") {
+    if ((node_process__WEBPACK_IMPORTED_MODULE_6___default().platform) === "darwin") {
         _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Patching Z3 dynamic library");
-        const dylib = node_path__WEBPACK_IMPORTED_MODULE_5__.join(z3Root, "bin", "libz3.dylib");
+        const dylib = node_path__WEBPACK_IMPORTED_MODULE_5___default().join(z3Root, "bin", "libz3.dylib");
         _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug(`==> Changing dylib ID from libz3.dylib to ${dylib}`);
         const cmd = "install_name_tool";
-        const args = ["-id", dylib, "-change", node_path__WEBPACK_IMPORTED_MODULE_5__.basename(dylib), dylib, dylib];
+        const args = ["-id", dylib, "-change", node_path__WEBPACK_IMPORTED_MODULE_5___default().basename(dylib), dylib, dylib];
         await _actions_exec__WEBPACK_IMPORTED_MODULE_1__.exec(cmd, args);
     }
     if (addToLibraryPath) {
-        if (node_process__WEBPACK_IMPORTED_MODULE_6__.platform === "darwin") {
+        if ((node_process__WEBPACK_IMPORTED_MODULE_6___default().platform) === "darwin") {
             // On macOS, we want to update CPATH, LIBRARY_PATH and DYLD_LIBRARY_PATH
             _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to CPATH");
             appendEnv("CPATH", `${z3Root}/include`);
@@ -59931,7 +58519,7 @@ async function run() {
             _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to DYLD_LIBRARY_PATH");
             appendEnv("DYLD_LIBRARY_PATH", `${z3Root}/bin`);
         }
-        else if (node_process__WEBPACK_IMPORTED_MODULE_6__.platform === "linux") {
+        else if ((node_process__WEBPACK_IMPORTED_MODULE_6___default().platform) === "linux") {
             // On linux, we want to update CPATH, LIBRARY_PATH and LD_LIBRARY_PATH
             _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to CPATH");
             appendEnv("CPATH", `${z3Root}/include`);
@@ -59940,7 +58528,7 @@ async function run() {
             _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to LD_LIBRARY_PATH");
             appendEnv("LD_LIBRARY_PATH", `${z3Root}/bin`);
         }
-        else if (node_process__WEBPACK_IMPORTED_MODULE_6__.platform === "win32") {
+        else if ((node_process__WEBPACK_IMPORTED_MODULE_6___default().platform) === "win32") {
             // On windows, it is CPATH and LIB. Windows should search for .dll files in PATH already.
             _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to CPATH");
             appendEnv("CPATH", `${z3Root}\\include`);
@@ -59948,7 +58536,7 @@ async function run() {
             appendEnv("LIB", `${z3Root}\\bin`);
         }
         else {
-            _actions_core__WEBPACK_IMPORTED_MODULE_0__.warning(` ==> Cannot set library paths on platform ${node_process__WEBPACK_IMPORTED_MODULE_6__.platform}`);
+            _actions_core__WEBPACK_IMPORTED_MODULE_0__.warning(` ==> Cannot set library paths on platform ${(node_process__WEBPACK_IMPORTED_MODULE_6___default().platform)}`);
         }
     }
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Deleting temporary files");
@@ -59969,9 +58557,9 @@ catch (error) {
     }
 }
 function appendEnv(varName, value) {
-    const sep = node_process__WEBPACK_IMPORTED_MODULE_6__.platform === "win32" ? ";" : ":";
-    if (varName in node_process__WEBPACK_IMPORTED_MODULE_6__.env) {
-        _actions_core__WEBPACK_IMPORTED_MODULE_0__.exportVariable(varName, node_process__WEBPACK_IMPORTED_MODULE_6__.env[varName] + sep + value);
+    const sep = (node_process__WEBPACK_IMPORTED_MODULE_6___default().platform) === "win32" ? ";" : ":";
+    if (varName in (node_process__WEBPACK_IMPORTED_MODULE_6___default().env)) {
+        _actions_core__WEBPACK_IMPORTED_MODULE_0__.exportVariable(varName, (node_process__WEBPACK_IMPORTED_MODULE_6___default().env)[varName] + sep + value);
     }
     else {
         _actions_core__WEBPACK_IMPORTED_MODULE_0__.exportVariable(varName, value);
@@ -59980,6 +58568,1955 @@ function appendEnv(varName, value) {
 
 __webpack_async_result__();
 } catch(e) { __webpack_async_result__(e); } }, 1);
+
+/***/ }),
+
+/***/ 9491:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("assert");
+
+/***/ }),
+
+/***/ 852:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("async_hooks");
+
+/***/ }),
+
+/***/ 4300:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("buffer");
+
+/***/ }),
+
+/***/ 2081:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("child_process");
+
+/***/ }),
+
+/***/ 6206:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("console");
+
+/***/ }),
+
+/***/ 6113:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("crypto");
+
+/***/ }),
+
+/***/ 7643:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("diagnostics_channel");
+
+/***/ }),
+
+/***/ 2361:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("events");
+
+/***/ }),
+
+/***/ 7147:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("fs");
+
+/***/ }),
+
+/***/ 3685:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("http");
+
+/***/ }),
+
+/***/ 5158:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("http2");
+
+/***/ }),
+
+/***/ 5687:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("https");
+
+/***/ }),
+
+/***/ 1808:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("net");
+
+/***/ }),
+
+/***/ 8061:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:assert");
+
+/***/ }),
+
+/***/ 2761:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:async_hooks");
+
+/***/ }),
+
+/***/ 2254:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:buffer");
+
+/***/ }),
+
+/***/ 27:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:console");
+
+/***/ }),
+
+/***/ 6005:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:crypto");
+
+/***/ }),
+
+/***/ 5714:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:diagnostics_channel");
+
+/***/ }),
+
+/***/ 5673:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:events");
+
+/***/ }),
+
+/***/ 8849:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:http");
+
+/***/ }),
+
+/***/ 2725:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:http2");
+
+/***/ }),
+
+/***/ 7503:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:net");
+
+/***/ }),
+
+/***/ 9411:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:path");
+
+/***/ }),
+
+/***/ 8846:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:perf_hooks");
+
+/***/ }),
+
+/***/ 7742:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:process");
+
+/***/ }),
+
+/***/ 9630:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:querystring");
+
+/***/ }),
+
+/***/ 4492:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:stream");
+
+/***/ }),
+
+/***/ 1764:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:tls");
+
+/***/ }),
+
+/***/ 1041:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:url");
+
+/***/ }),
+
+/***/ 7261:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:util");
+
+/***/ }),
+
+/***/ 3746:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:util/types");
+
+/***/ }),
+
+/***/ 4086:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:worker_threads");
+
+/***/ }),
+
+/***/ 5628:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:zlib");
+
+/***/ }),
+
+/***/ 2037:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("os");
+
+/***/ }),
+
+/***/ 1017:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("path");
+
+/***/ }),
+
+/***/ 4074:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("perf_hooks");
+
+/***/ }),
+
+/***/ 3477:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("querystring");
+
+/***/ }),
+
+/***/ 2781:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("stream");
+
+/***/ }),
+
+/***/ 5356:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("stream/web");
+
+/***/ }),
+
+/***/ 1576:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("string_decoder");
+
+/***/ }),
+
+/***/ 9512:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("timers");
+
+/***/ }),
+
+/***/ 4404:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("tls");
+
+/***/ }),
+
+/***/ 7310:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("url");
+
+/***/ }),
+
+/***/ 3837:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("util");
+
+/***/ }),
+
+/***/ 9830:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("util/types");
+
+/***/ }),
+
+/***/ 1267:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("worker_threads");
+
+/***/ }),
+
+/***/ 9796:
+/***/ ((module) => {
+
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("zlib");
+
+/***/ }),
+
+/***/ 2960:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+
+const WritableStream = (__nccwpck_require__(4492).Writable)
+const inherits = (__nccwpck_require__(7261).inherits)
+
+const StreamSearch = __nccwpck_require__(1142)
+
+const PartStream = __nccwpck_require__(1620)
+const HeaderParser = __nccwpck_require__(2032)
+
+const DASH = 45
+const B_ONEDASH = Buffer.from('-')
+const B_CRLF = Buffer.from('\r\n')
+const EMPTY_FN = function () {}
+
+function Dicer (cfg) {
+  if (!(this instanceof Dicer)) { return new Dicer(cfg) }
+  WritableStream.call(this, cfg)
+
+  if (!cfg || (!cfg.headerFirst && typeof cfg.boundary !== 'string')) { throw new TypeError('Boundary required') }
+
+  if (typeof cfg.boundary === 'string') { this.setBoundary(cfg.boundary) } else { this._bparser = undefined }
+
+  this._headerFirst = cfg.headerFirst
+
+  this._dashes = 0
+  this._parts = 0
+  this._finished = false
+  this._realFinish = false
+  this._isPreamble = true
+  this._justMatched = false
+  this._firstWrite = true
+  this._inHeader = true
+  this._part = undefined
+  this._cb = undefined
+  this._ignoreData = false
+  this._partOpts = { highWaterMark: cfg.partHwm }
+  this._pause = false
+
+  const self = this
+  this._hparser = new HeaderParser(cfg)
+  this._hparser.on('header', function (header) {
+    self._inHeader = false
+    self._part.emit('header', header)
+  })
+}
+inherits(Dicer, WritableStream)
+
+Dicer.prototype.emit = function (ev) {
+  if (ev === 'finish' && !this._realFinish) {
+    if (!this._finished) {
+      const self = this
+      process.nextTick(function () {
+        self.emit('error', new Error('Unexpected end of multipart data'))
+        if (self._part && !self._ignoreData) {
+          const type = (self._isPreamble ? 'Preamble' : 'Part')
+          self._part.emit('error', new Error(type + ' terminated early due to unexpected end of multipart data'))
+          self._part.push(null)
+          process.nextTick(function () {
+            self._realFinish = true
+            self.emit('finish')
+            self._realFinish = false
+          })
+          return
+        }
+        self._realFinish = true
+        self.emit('finish')
+        self._realFinish = false
+      })
+    }
+  } else { WritableStream.prototype.emit.apply(this, arguments) }
+}
+
+Dicer.prototype._write = function (data, encoding, cb) {
+  // ignore unexpected data (e.g. extra trailer data after finished)
+  if (!this._hparser && !this._bparser) { return cb() }
+
+  if (this._headerFirst && this._isPreamble) {
+    if (!this._part) {
+      this._part = new PartStream(this._partOpts)
+      if (this.listenerCount('preamble') !== 0) { this.emit('preamble', this._part) } else { this._ignore() }
+    }
+    const r = this._hparser.push(data)
+    if (!this._inHeader && r !== undefined && r < data.length) { data = data.slice(r) } else { return cb() }
+  }
+
+  // allows for "easier" testing
+  if (this._firstWrite) {
+    this._bparser.push(B_CRLF)
+    this._firstWrite = false
+  }
+
+  this._bparser.push(data)
+
+  if (this._pause) { this._cb = cb } else { cb() }
+}
+
+Dicer.prototype.reset = function () {
+  this._part = undefined
+  this._bparser = undefined
+  this._hparser = undefined
+}
+
+Dicer.prototype.setBoundary = function (boundary) {
+  const self = this
+  this._bparser = new StreamSearch('\r\n--' + boundary)
+  this._bparser.on('info', function (isMatch, data, start, end) {
+    self._oninfo(isMatch, data, start, end)
+  })
+}
+
+Dicer.prototype._ignore = function () {
+  if (this._part && !this._ignoreData) {
+    this._ignoreData = true
+    this._part.on('error', EMPTY_FN)
+    // we must perform some kind of read on the stream even though we are
+    // ignoring the data, otherwise node's Readable stream will not emit 'end'
+    // after pushing null to the stream
+    this._part.resume()
+  }
+}
+
+Dicer.prototype._oninfo = function (isMatch, data, start, end) {
+  let buf; const self = this; let i = 0; let r; let shouldWriteMore = true
+
+  if (!this._part && this._justMatched && data) {
+    while (this._dashes < 2 && (start + i) < end) {
+      if (data[start + i] === DASH) {
+        ++i
+        ++this._dashes
+      } else {
+        if (this._dashes) { buf = B_ONEDASH }
+        this._dashes = 0
+        break
+      }
+    }
+    if (this._dashes === 2) {
+      if ((start + i) < end && this.listenerCount('trailer') !== 0) { this.emit('trailer', data.slice(start + i, end)) }
+      this.reset()
+      this._finished = true
+      // no more parts will be added
+      if (self._parts === 0) {
+        self._realFinish = true
+        self.emit('finish')
+        self._realFinish = false
+      }
+    }
+    if (this._dashes) { return }
+  }
+  if (this._justMatched) { this._justMatched = false }
+  if (!this._part) {
+    this._part = new PartStream(this._partOpts)
+    this._part._read = function (n) {
+      self._unpause()
+    }
+    if (this._isPreamble && this.listenerCount('preamble') !== 0) {
+      this.emit('preamble', this._part)
+    } else if (this._isPreamble !== true && this.listenerCount('part') !== 0) {
+      this.emit('part', this._part)
+    } else {
+      this._ignore()
+    }
+    if (!this._isPreamble) { this._inHeader = true }
+  }
+  if (data && start < end && !this._ignoreData) {
+    if (this._isPreamble || !this._inHeader) {
+      if (buf) { shouldWriteMore = this._part.push(buf) }
+      shouldWriteMore = this._part.push(data.slice(start, end))
+      if (!shouldWriteMore) { this._pause = true }
+    } else if (!this._isPreamble && this._inHeader) {
+      if (buf) { this._hparser.push(buf) }
+      r = this._hparser.push(data.slice(start, end))
+      if (!this._inHeader && r !== undefined && r < end) { this._oninfo(false, data, start + r, end) }
+    }
+  }
+  if (isMatch) {
+    this._hparser.reset()
+    if (this._isPreamble) { this._isPreamble = false } else {
+      if (start !== end) {
+        ++this._parts
+        this._part.on('end', function () {
+          if (--self._parts === 0) {
+            if (self._finished) {
+              self._realFinish = true
+              self.emit('finish')
+              self._realFinish = false
+            } else {
+              self._unpause()
+            }
+          }
+        })
+      }
+    }
+    this._part.push(null)
+    this._part = undefined
+    this._ignoreData = false
+    this._justMatched = true
+    this._dashes = 0
+  }
+}
+
+Dicer.prototype._unpause = function () {
+  if (!this._pause) { return }
+
+  this._pause = false
+  if (this._cb) {
+    const cb = this._cb
+    this._cb = undefined
+    cb()
+  }
+}
+
+module.exports = Dicer
+
+
+/***/ }),
+
+/***/ 2032:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+
+const EventEmitter = (__nccwpck_require__(5673).EventEmitter)
+const inherits = (__nccwpck_require__(7261).inherits)
+const getLimit = __nccwpck_require__(1467)
+
+const StreamSearch = __nccwpck_require__(1142)
+
+const B_DCRLF = Buffer.from('\r\n\r\n')
+const RE_CRLF = /\r\n/g
+const RE_HDR = /^([^:]+):[ \t]?([\x00-\xFF]+)?$/ // eslint-disable-line no-control-regex
+
+function HeaderParser (cfg) {
+  EventEmitter.call(this)
+
+  cfg = cfg || {}
+  const self = this
+  this.nread = 0
+  this.maxed = false
+  this.npairs = 0
+  this.maxHeaderPairs = getLimit(cfg, 'maxHeaderPairs', 2000)
+  this.maxHeaderSize = getLimit(cfg, 'maxHeaderSize', 80 * 1024)
+  this.buffer = ''
+  this.header = {}
+  this.finished = false
+  this.ss = new StreamSearch(B_DCRLF)
+  this.ss.on('info', function (isMatch, data, start, end) {
+    if (data && !self.maxed) {
+      if (self.nread + end - start >= self.maxHeaderSize) {
+        end = self.maxHeaderSize - self.nread + start
+        self.nread = self.maxHeaderSize
+        self.maxed = true
+      } else { self.nread += (end - start) }
+
+      self.buffer += data.toString('binary', start, end)
+    }
+    if (isMatch) { self._finish() }
+  })
+}
+inherits(HeaderParser, EventEmitter)
+
+HeaderParser.prototype.push = function (data) {
+  const r = this.ss.push(data)
+  if (this.finished) { return r }
+}
+
+HeaderParser.prototype.reset = function () {
+  this.finished = false
+  this.buffer = ''
+  this.header = {}
+  this.ss.reset()
+}
+
+HeaderParser.prototype._finish = function () {
+  if (this.buffer) { this._parseHeader() }
+  this.ss.matches = this.ss.maxMatches
+  const header = this.header
+  this.header = {}
+  this.buffer = ''
+  this.finished = true
+  this.nread = this.npairs = 0
+  this.maxed = false
+  this.emit('header', header)
+}
+
+HeaderParser.prototype._parseHeader = function () {
+  if (this.npairs === this.maxHeaderPairs) { return }
+
+  const lines = this.buffer.split(RE_CRLF)
+  const len = lines.length
+  let m, h
+
+  for (var i = 0; i < len; ++i) { // eslint-disable-line no-var
+    if (lines[i].length === 0) { continue }
+    if (lines[i][0] === '\t' || lines[i][0] === ' ') {
+      // folded header content
+      // RFC2822 says to just remove the CRLF and not the whitespace following
+      // it, so we follow the RFC and include the leading whitespace ...
+      if (h) {
+        this.header[h][this.header[h].length - 1] += lines[i]
+        continue
+      }
+    }
+
+    const posColon = lines[i].indexOf(':')
+    if (
+      posColon === -1 ||
+      posColon === 0
+    ) {
+      return
+    }
+    m = RE_HDR.exec(lines[i])
+    h = m[1].toLowerCase()
+    this.header[h] = this.header[h] || []
+    this.header[h].push((m[2] || ''))
+    if (++this.npairs === this.maxHeaderPairs) { break }
+  }
+}
+
+module.exports = HeaderParser
+
+
+/***/ }),
+
+/***/ 1620:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+
+const inherits = (__nccwpck_require__(7261).inherits)
+const ReadableStream = (__nccwpck_require__(4492).Readable)
+
+function PartStream (opts) {
+  ReadableStream.call(this, opts)
+}
+inherits(PartStream, ReadableStream)
+
+PartStream.prototype._read = function (n) {}
+
+module.exports = PartStream
+
+
+/***/ }),
+
+/***/ 1142:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+
+/**
+ * Copyright Brian White. All rights reserved.
+ *
+ * @see https://github.com/mscdex/streamsearch
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to
+ * deal in the Software without restriction, including without limitation the
+ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+ * IN THE SOFTWARE.
+ *
+ * Based heavily on the Streaming Boyer-Moore-Horspool C++ implementation
+ * by Hongli Lai at: https://github.com/FooBarWidget/boyer-moore-horspool
+ */
+const EventEmitter = (__nccwpck_require__(5673).EventEmitter)
+const inherits = (__nccwpck_require__(7261).inherits)
+
+function SBMH (needle) {
+  if (typeof needle === 'string') {
+    needle = Buffer.from(needle)
+  }
+
+  if (!Buffer.isBuffer(needle)) {
+    throw new TypeError('The needle has to be a String or a Buffer.')
+  }
+
+  const needleLength = needle.length
+
+  if (needleLength === 0) {
+    throw new Error('The needle cannot be an empty String/Buffer.')
+  }
+
+  if (needleLength > 256) {
+    throw new Error('The needle cannot have a length bigger than 256.')
+  }
+
+  this.maxMatches = Infinity
+  this.matches = 0
+
+  this._occ = new Array(256)
+    .fill(needleLength) // Initialize occurrence table.
+  this._lookbehind_size = 0
+  this._needle = needle
+  this._bufpos = 0
+
+  this._lookbehind = Buffer.alloc(needleLength)
+
+  // Populate occurrence table with analysis of the needle,
+  // ignoring last letter.
+  for (var i = 0; i < needleLength - 1; ++i) { // eslint-disable-line no-var
+    this._occ[needle[i]] = needleLength - 1 - i
+  }
+}
+inherits(SBMH, EventEmitter)
+
+SBMH.prototype.reset = function () {
+  this._lookbehind_size = 0
+  this.matches = 0
+  this._bufpos = 0
+}
+
+SBMH.prototype.push = function (chunk, pos) {
+  if (!Buffer.isBuffer(chunk)) {
+    chunk = Buffer.from(chunk, 'binary')
+  }
+  const chlen = chunk.length
+  this._bufpos = pos || 0
+  let r
+  while (r !== chlen && this.matches < this.maxMatches) { r = this._sbmh_feed(chunk) }
+  return r
+}
+
+SBMH.prototype._sbmh_feed = function (data) {
+  const len = data.length
+  const needle = this._needle
+  const needleLength = needle.length
+  const lastNeedleChar = needle[needleLength - 1]
+
+  // Positive: points to a position in `data`
+  //           pos == 3 points to data[3]
+  // Negative: points to a position in the lookbehind buffer
+  //           pos == -2 points to lookbehind[lookbehind_size - 2]
+  let pos = -this._lookbehind_size
+  let ch
+
+  if (pos < 0) {
+    // Lookbehind buffer is not empty. Perform Boyer-Moore-Horspool
+    // search with character lookup code that considers both the
+    // lookbehind buffer and the current round's haystack data.
+    //
+    // Loop until
+    //   there is a match.
+    // or until
+    //   we've moved past the position that requires the
+    //   lookbehind buffer. In this case we switch to the
+    //   optimized loop.
+    // or until
+    //   the character to look at lies outside the haystack.
+    while (pos < 0 && pos <= len - needleLength) {
+      ch = this._sbmh_lookup_char(data, pos + needleLength - 1)
+
+      if (
+        ch === lastNeedleChar &&
+        this._sbmh_memcmp(data, pos, needleLength - 1)
+      ) {
+        this._lookbehind_size = 0
+        ++this.matches
+        this.emit('info', true)
+
+        return (this._bufpos = pos + needleLength)
+      }
+      pos += this._occ[ch]
+    }
+
+    // No match.
+
+    if (pos < 0) {
+      // There's too few data for Boyer-Moore-Horspool to run,
+      // so let's use a different algorithm to skip as much as
+      // we can.
+      // Forward pos until
+      //   the trailing part of lookbehind + data
+      //   looks like the beginning of the needle
+      // or until
+      //   pos == 0
+      while (pos < 0 && !this._sbmh_memcmp(data, pos, len - pos)) { ++pos }
+    }
+
+    if (pos >= 0) {
+      // Discard lookbehind buffer.
+      this.emit('info', false, this._lookbehind, 0, this._lookbehind_size)
+      this._lookbehind_size = 0
+    } else {
+      // Cut off part of the lookbehind buffer that has
+      // been processed and append the entire haystack
+      // into it.
+      const bytesToCutOff = this._lookbehind_size + pos
+      if (bytesToCutOff > 0) {
+        // The cut off data is guaranteed not to contain the needle.
+        this.emit('info', false, this._lookbehind, 0, bytesToCutOff)
+      }
+
+      this._lookbehind.copy(this._lookbehind, 0, bytesToCutOff,
+        this._lookbehind_size - bytesToCutOff)
+      this._lookbehind_size -= bytesToCutOff
+
+      data.copy(this._lookbehind, this._lookbehind_size)
+      this._lookbehind_size += len
+
+      this._bufpos = len
+      return len
+    }
+  }
+
+  pos += (pos >= 0) * this._bufpos
+
+  // Lookbehind buffer is now empty. We only need to check if the
+  // needle is in the haystack.
+  if (data.indexOf(needle, pos) !== -1) {
+    pos = data.indexOf(needle, pos)
+    ++this.matches
+    if (pos > 0) { this.emit('info', true, data, this._bufpos, pos) } else { this.emit('info', true) }
+
+    return (this._bufpos = pos + needleLength)
+  } else {
+    pos = len - needleLength
+  }
+
+  // There was no match. If there's trailing haystack data that we cannot
+  // match yet using the Boyer-Moore-Horspool algorithm (because the trailing
+  // data is less than the needle size) then match using a modified
+  // algorithm that starts matching from the beginning instead of the end.
+  // Whatever trailing data is left after running this algorithm is added to
+  // the lookbehind buffer.
+  while (
+    pos < len &&
+    (
+      data[pos] !== needle[0] ||
+      (
+        (Buffer.compare(
+          data.subarray(pos, pos + len - pos),
+          needle.subarray(0, len - pos)
+        ) !== 0)
+      )
+    )
+  ) {
+    ++pos
+  }
+  if (pos < len) {
+    data.copy(this._lookbehind, 0, pos, pos + (len - pos))
+    this._lookbehind_size = len - pos
+  }
+
+  // Everything until pos is guaranteed not to contain needle data.
+  if (pos > 0) { this.emit('info', false, data, this._bufpos, pos < len ? pos : len) }
+
+  this._bufpos = len
+  return len
+}
+
+SBMH.prototype._sbmh_lookup_char = function (data, pos) {
+  return (pos < 0)
+    ? this._lookbehind[this._lookbehind_size + pos]
+    : data[pos]
+}
+
+SBMH.prototype._sbmh_memcmp = function (data, pos, len) {
+  for (var i = 0; i < len; ++i) { // eslint-disable-line no-var
+    if (this._sbmh_lookup_char(data, pos + i) !== this._needle[i]) { return false }
+  }
+  return true
+}
+
+module.exports = SBMH
+
+
+/***/ }),
+
+/***/ 727:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+
+const WritableStream = (__nccwpck_require__(4492).Writable)
+const { inherits } = __nccwpck_require__(7261)
+const Dicer = __nccwpck_require__(2960)
+
+const MultipartParser = __nccwpck_require__(2183)
+const UrlencodedParser = __nccwpck_require__(8306)
+const parseParams = __nccwpck_require__(1854)
+
+function Busboy (opts) {
+  if (!(this instanceof Busboy)) { return new Busboy(opts) }
+
+  if (typeof opts !== 'object') {
+    throw new TypeError('Busboy expected an options-Object.')
+  }
+  if (typeof opts.headers !== 'object') {
+    throw new TypeError('Busboy expected an options-Object with headers-attribute.')
+  }
+  if (typeof opts.headers['content-type'] !== 'string') {
+    throw new TypeError('Missing Content-Type-header.')
+  }
+
+  const {
+    headers,
+    ...streamOptions
+  } = opts
+
+  this.opts = {
+    autoDestroy: false,
+    ...streamOptions
+  }
+  WritableStream.call(this, this.opts)
+
+  this._done = false
+  this._parser = this.getParserByHeaders(headers)
+  this._finished = false
+}
+inherits(Busboy, WritableStream)
+
+Busboy.prototype.emit = function (ev) {
+  if (ev === 'finish') {
+    if (!this._done) {
+      this._parser?.end()
+      return
+    } else if (this._finished) {
+      return
+    }
+    this._finished = true
+  }
+  WritableStream.prototype.emit.apply(this, arguments)
+}
+
+Busboy.prototype.getParserByHeaders = function (headers) {
+  const parsed = parseParams(headers['content-type'])
+
+  const cfg = {
+    defCharset: this.opts.defCharset,
+    fileHwm: this.opts.fileHwm,
+    headers,
+    highWaterMark: this.opts.highWaterMark,
+    isPartAFile: this.opts.isPartAFile,
+    limits: this.opts.limits,
+    parsedConType: parsed,
+    preservePath: this.opts.preservePath
+  }
+
+  if (MultipartParser.detect.test(parsed[0])) {
+    return new MultipartParser(this, cfg)
+  }
+  if (UrlencodedParser.detect.test(parsed[0])) {
+    return new UrlencodedParser(this, cfg)
+  }
+  throw new Error('Unsupported Content-Type.')
+}
+
+Busboy.prototype._write = function (chunk, encoding, cb) {
+  this._parser.write(chunk, cb)
+}
+
+module.exports = Busboy
+module.exports["default"] = Busboy
+module.exports.Busboy = Busboy
+
+module.exports.Dicer = Dicer
+
+
+/***/ }),
+
+/***/ 2183:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+
+// TODO:
+//  * support 1 nested multipart level
+//    (see second multipart example here:
+//     http://www.w3.org/TR/html401/interact/forms.html#didx-multipartform-data)
+//  * support limits.fieldNameSize
+//     -- this will require modifications to utils.parseParams
+
+const { Readable } = __nccwpck_require__(4492)
+const { inherits } = __nccwpck_require__(7261)
+
+const Dicer = __nccwpck_require__(2960)
+
+const parseParams = __nccwpck_require__(1854)
+const decodeText = __nccwpck_require__(4619)
+const basename = __nccwpck_require__(8647)
+const getLimit = __nccwpck_require__(1467)
+
+const RE_BOUNDARY = /^boundary$/i
+const RE_FIELD = /^form-data$/i
+const RE_CHARSET = /^charset$/i
+const RE_FILENAME = /^filename$/i
+const RE_NAME = /^name$/i
+
+Multipart.detect = /^multipart\/form-data/i
+function Multipart (boy, cfg) {
+  let i
+  let len
+  const self = this
+  let boundary
+  const limits = cfg.limits
+  const isPartAFile = cfg.isPartAFile || ((fieldName, contentType, fileName) => (contentType === 'application/octet-stream' || fileName !== undefined))
+  const parsedConType = cfg.parsedConType || []
+  const defCharset = cfg.defCharset || 'utf8'
+  const preservePath = cfg.preservePath
+  const fileOpts = { highWaterMark: cfg.fileHwm }
+
+  for (i = 0, len = parsedConType.length; i < len; ++i) {
+    if (Array.isArray(parsedConType[i]) &&
+      RE_BOUNDARY.test(parsedConType[i][0])) {
+      boundary = parsedConType[i][1]
+      break
+    }
+  }
+
+  function checkFinished () {
+    if (nends === 0 && finished && !boy._done) {
+      finished = false
+      self.end()
+    }
+  }
+
+  if (typeof boundary !== 'string') { throw new Error('Multipart: Boundary not found') }
+
+  const fieldSizeLimit = getLimit(limits, 'fieldSize', 1 * 1024 * 1024)
+  const fileSizeLimit = getLimit(limits, 'fileSize', Infinity)
+  const filesLimit = getLimit(limits, 'files', Infinity)
+  const fieldsLimit = getLimit(limits, 'fields', Infinity)
+  const partsLimit = getLimit(limits, 'parts', Infinity)
+  const headerPairsLimit = getLimit(limits, 'headerPairs', 2000)
+  const headerSizeLimit = getLimit(limits, 'headerSize', 80 * 1024)
+
+  let nfiles = 0
+  let nfields = 0
+  let nends = 0
+  let curFile
+  let curField
+  let finished = false
+
+  this._needDrain = false
+  this._pause = false
+  this._cb = undefined
+  this._nparts = 0
+  this._boy = boy
+
+  const parserCfg = {
+    boundary,
+    maxHeaderPairs: headerPairsLimit,
+    maxHeaderSize: headerSizeLimit,
+    partHwm: fileOpts.highWaterMark,
+    highWaterMark: cfg.highWaterMark
+  }
+
+  this.parser = new Dicer(parserCfg)
+  this.parser.on('drain', function () {
+    self._needDrain = false
+    if (self._cb && !self._pause) {
+      const cb = self._cb
+      self._cb = undefined
+      cb()
+    }
+  }).on('part', function onPart (part) {
+    if (++self._nparts > partsLimit) {
+      self.parser.removeListener('part', onPart)
+      self.parser.on('part', skipPart)
+      boy.hitPartsLimit = true
+      boy.emit('partsLimit')
+      return skipPart(part)
+    }
+
+    // hack because streams2 _always_ doesn't emit 'end' until nextTick, so let
+    // us emit 'end' early since we know the part has ended if we are already
+    // seeing the next part
+    if (curField) {
+      const field = curField
+      field.emit('end')
+      field.removeAllListeners('end')
+    }
+
+    part.on('header', function (header) {
+      let contype
+      let fieldname
+      let parsed
+      let charset
+      let encoding
+      let filename
+      let nsize = 0
+
+      if (header['content-type']) {
+        parsed = parseParams(header['content-type'][0])
+        if (parsed[0]) {
+          contype = parsed[0].toLowerCase()
+          for (i = 0, len = parsed.length; i < len; ++i) {
+            if (RE_CHARSET.test(parsed[i][0])) {
+              charset = parsed[i][1].toLowerCase()
+              break
+            }
+          }
+        }
+      }
+
+      if (contype === undefined) { contype = 'text/plain' }
+      if (charset === undefined) { charset = defCharset }
+
+      if (header['content-disposition']) {
+        parsed = parseParams(header['content-disposition'][0])
+        if (!RE_FIELD.test(parsed[0])) { return skipPart(part) }
+        for (i = 0, len = parsed.length; i < len; ++i) {
+          if (RE_NAME.test(parsed[i][0])) {
+            fieldname = parsed[i][1]
+          } else if (RE_FILENAME.test(parsed[i][0])) {
+            filename = parsed[i][1]
+            if (!preservePath) { filename = basename(filename) }
+          }
+        }
+      } else { return skipPart(part) }
+
+      if (header['content-transfer-encoding']) { encoding = header['content-transfer-encoding'][0].toLowerCase() } else { encoding = '7bit' }
+
+      let onData,
+        onEnd
+
+      if (isPartAFile(fieldname, contype, filename)) {
+        // file/binary field
+        if (nfiles === filesLimit) {
+          if (!boy.hitFilesLimit) {
+            boy.hitFilesLimit = true
+            boy.emit('filesLimit')
+          }
+          return skipPart(part)
+        }
+
+        ++nfiles
+
+        if (boy.listenerCount('file') === 0) {
+          self.parser._ignore()
+          return
+        }
+
+        ++nends
+        const file = new FileStream(fileOpts)
+        curFile = file
+        file.on('end', function () {
+          --nends
+          self._pause = false
+          checkFinished()
+          if (self._cb && !self._needDrain) {
+            const cb = self._cb
+            self._cb = undefined
+            cb()
+          }
+        })
+        file._read = function (n) {
+          if (!self._pause) { return }
+          self._pause = false
+          if (self._cb && !self._needDrain) {
+            const cb = self._cb
+            self._cb = undefined
+            cb()
+          }
+        }
+        boy.emit('file', fieldname, file, filename, encoding, contype)
+
+        onData = function (data) {
+          if ((nsize += data.length) > fileSizeLimit) {
+            const extralen = fileSizeLimit - nsize + data.length
+            if (extralen > 0) { file.push(data.slice(0, extralen)) }
+            file.truncated = true
+            file.bytesRead = fileSizeLimit
+            part.removeAllListeners('data')
+            file.emit('limit')
+            return
+          } else if (!file.push(data)) { self._pause = true }
+
+          file.bytesRead = nsize
+        }
+
+        onEnd = function () {
+          curFile = undefined
+          file.push(null)
+        }
+      } else {
+        // non-file field
+        if (nfields === fieldsLimit) {
+          if (!boy.hitFieldsLimit) {
+            boy.hitFieldsLimit = true
+            boy.emit('fieldsLimit')
+          }
+          return skipPart(part)
+        }
+
+        ++nfields
+        ++nends
+        let buffer = ''
+        let truncated = false
+        curField = part
+
+        onData = function (data) {
+          if ((nsize += data.length) > fieldSizeLimit) {
+            const extralen = (fieldSizeLimit - (nsize - data.length))
+            buffer += data.toString('binary', 0, extralen)
+            truncated = true
+            part.removeAllListeners('data')
+          } else { buffer += data.toString('binary') }
+        }
+
+        onEnd = function () {
+          curField = undefined
+          if (buffer.length) { buffer = decodeText(buffer, 'binary', charset) }
+          boy.emit('field', fieldname, buffer, false, truncated, encoding, contype)
+          --nends
+          checkFinished()
+        }
+      }
+
+      /* As of node@2efe4ab761666 (v0.10.29+/v0.11.14+), busboy had become
+         broken. Streams2/streams3 is a huge black box of confusion, but
+         somehow overriding the sync state seems to fix things again (and still
+         seems to work for previous node versions).
+      */
+      part._readableState.sync = false
+
+      part.on('data', onData)
+      part.on('end', onEnd)
+    }).on('error', function (err) {
+      if (curFile) { curFile.emit('error', err) }
+    })
+  }).on('error', function (err) {
+    boy.emit('error', err)
+  }).on('finish', function () {
+    finished = true
+    checkFinished()
+  })
+}
+
+Multipart.prototype.write = function (chunk, cb) {
+  const r = this.parser.write(chunk)
+  if (r && !this._pause) {
+    cb()
+  } else {
+    this._needDrain = !r
+    this._cb = cb
+  }
+}
+
+Multipart.prototype.end = function () {
+  const self = this
+
+  if (self.parser.writable) {
+    self.parser.end()
+  } else if (!self._boy._done) {
+    process.nextTick(function () {
+      self._boy._done = true
+      self._boy.emit('finish')
+    })
+  }
+}
+
+function skipPart (part) {
+  part.resume()
+}
+
+function FileStream (opts) {
+  Readable.call(this, opts)
+
+  this.bytesRead = 0
+
+  this.truncated = false
+}
+
+inherits(FileStream, Readable)
+
+FileStream.prototype._read = function (n) {}
+
+module.exports = Multipart
+
+
+/***/ }),
+
+/***/ 8306:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+
+const Decoder = __nccwpck_require__(7100)
+const decodeText = __nccwpck_require__(4619)
+const getLimit = __nccwpck_require__(1467)
+
+const RE_CHARSET = /^charset$/i
+
+UrlEncoded.detect = /^application\/x-www-form-urlencoded/i
+function UrlEncoded (boy, cfg) {
+  const limits = cfg.limits
+  const parsedConType = cfg.parsedConType
+  this.boy = boy
+
+  this.fieldSizeLimit = getLimit(limits, 'fieldSize', 1 * 1024 * 1024)
+  this.fieldNameSizeLimit = getLimit(limits, 'fieldNameSize', 100)
+  this.fieldsLimit = getLimit(limits, 'fields', Infinity)
+
+  let charset
+  for (var i = 0, len = parsedConType.length; i < len; ++i) { // eslint-disable-line no-var
+    if (Array.isArray(parsedConType[i]) &&
+        RE_CHARSET.test(parsedConType[i][0])) {
+      charset = parsedConType[i][1].toLowerCase()
+      break
+    }
+  }
+
+  if (charset === undefined) { charset = cfg.defCharset || 'utf8' }
+
+  this.decoder = new Decoder()
+  this.charset = charset
+  this._fields = 0
+  this._state = 'key'
+  this._checkingBytes = true
+  this._bytesKey = 0
+  this._bytesVal = 0
+  this._key = ''
+  this._val = ''
+  this._keyTrunc = false
+  this._valTrunc = false
+  this._hitLimit = false
+}
+
+UrlEncoded.prototype.write = function (data, cb) {
+  if (this._fields === this.fieldsLimit) {
+    if (!this.boy.hitFieldsLimit) {
+      this.boy.hitFieldsLimit = true
+      this.boy.emit('fieldsLimit')
+    }
+    return cb()
+  }
+
+  let idxeq; let idxamp; let i; let p = 0; const len = data.length
+
+  while (p < len) {
+    if (this._state === 'key') {
+      idxeq = idxamp = undefined
+      for (i = p; i < len; ++i) {
+        if (!this._checkingBytes) { ++p }
+        if (data[i] === 0x3D/* = */) {
+          idxeq = i
+          break
+        } else if (data[i] === 0x26/* & */) {
+          idxamp = i
+          break
+        }
+        if (this._checkingBytes && this._bytesKey === this.fieldNameSizeLimit) {
+          this._hitLimit = true
+          break
+        } else if (this._checkingBytes) { ++this._bytesKey }
+      }
+
+      if (idxeq !== undefined) {
+        // key with assignment
+        if (idxeq > p) { this._key += this.decoder.write(data.toString('binary', p, idxeq)) }
+        this._state = 'val'
+
+        this._hitLimit = false
+        this._checkingBytes = true
+        this._val = ''
+        this._bytesVal = 0
+        this._valTrunc = false
+        this.decoder.reset()
+
+        p = idxeq + 1
+      } else if (idxamp !== undefined) {
+        // key with no assignment
+        ++this._fields
+        let key; const keyTrunc = this._keyTrunc
+        if (idxamp > p) { key = (this._key += this.decoder.write(data.toString('binary', p, idxamp))) } else { key = this._key }
+
+        this._hitLimit = false
+        this._checkingBytes = true
+        this._key = ''
+        this._bytesKey = 0
+        this._keyTrunc = false
+        this.decoder.reset()
+
+        if (key.length) {
+          this.boy.emit('field', decodeText(key, 'binary', this.charset),
+            '',
+            keyTrunc,
+            false)
+        }
+
+        p = idxamp + 1
+        if (this._fields === this.fieldsLimit) { return cb() }
+      } else if (this._hitLimit) {
+        // we may not have hit the actual limit if there are encoded bytes...
+        if (i > p) { this._key += this.decoder.write(data.toString('binary', p, i)) }
+        p = i
+        if ((this._bytesKey = this._key.length) === this.fieldNameSizeLimit) {
+          // yep, we actually did hit the limit
+          this._checkingBytes = false
+          this._keyTrunc = true
+        }
+      } else {
+        if (p < len) { this._key += this.decoder.write(data.toString('binary', p)) }
+        p = len
+      }
+    } else {
+      idxamp = undefined
+      for (i = p; i < len; ++i) {
+        if (!this._checkingBytes) { ++p }
+        if (data[i] === 0x26/* & */) {
+          idxamp = i
+          break
+        }
+        if (this._checkingBytes && this._bytesVal === this.fieldSizeLimit) {
+          this._hitLimit = true
+          break
+        } else if (this._checkingBytes) { ++this._bytesVal }
+      }
+
+      if (idxamp !== undefined) {
+        ++this._fields
+        if (idxamp > p) { this._val += this.decoder.write(data.toString('binary', p, idxamp)) }
+        this.boy.emit('field', decodeText(this._key, 'binary', this.charset),
+          decodeText(this._val, 'binary', this.charset),
+          this._keyTrunc,
+          this._valTrunc)
+        this._state = 'key'
+
+        this._hitLimit = false
+        this._checkingBytes = true
+        this._key = ''
+        this._bytesKey = 0
+        this._keyTrunc = false
+        this.decoder.reset()
+
+        p = idxamp + 1
+        if (this._fields === this.fieldsLimit) { return cb() }
+      } else if (this._hitLimit) {
+        // we may not have hit the actual limit if there are encoded bytes...
+        if (i > p) { this._val += this.decoder.write(data.toString('binary', p, i)) }
+        p = i
+        if ((this._val === '' && this.fieldSizeLimit === 0) ||
+            (this._bytesVal = this._val.length) === this.fieldSizeLimit) {
+          // yep, we actually did hit the limit
+          this._checkingBytes = false
+          this._valTrunc = true
+        }
+      } else {
+        if (p < len) { this._val += this.decoder.write(data.toString('binary', p)) }
+        p = len
+      }
+    }
+  }
+  cb()
+}
+
+UrlEncoded.prototype.end = function () {
+  if (this.boy._done) { return }
+
+  if (this._state === 'key' && this._key.length > 0) {
+    this.boy.emit('field', decodeText(this._key, 'binary', this.charset),
+      '',
+      this._keyTrunc,
+      false)
+  } else if (this._state === 'val') {
+    this.boy.emit('field', decodeText(this._key, 'binary', this.charset),
+      decodeText(this._val, 'binary', this.charset),
+      this._keyTrunc,
+      this._valTrunc)
+  }
+  this.boy._done = true
+  this.boy.emit('finish')
+}
+
+module.exports = UrlEncoded
+
+
+/***/ }),
+
+/***/ 7100:
+/***/ ((module) => {
+
+
+
+const RE_PLUS = /\+/g
+
+const HEX = [
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0,
+  0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+]
+
+function Decoder () {
+  this.buffer = undefined
+}
+Decoder.prototype.write = function (str) {
+  // Replace '+' with ' ' before decoding
+  str = str.replace(RE_PLUS, ' ')
+  let res = ''
+  let i = 0; let p = 0; const len = str.length
+  for (; i < len; ++i) {
+    if (this.buffer !== undefined) {
+      if (!HEX[str.charCodeAt(i)]) {
+        res += '%' + this.buffer
+        this.buffer = undefined
+        --i // retry character
+      } else {
+        this.buffer += str[i]
+        ++p
+        if (this.buffer.length === 2) {
+          res += String.fromCharCode(parseInt(this.buffer, 16))
+          this.buffer = undefined
+        }
+      }
+    } else if (str[i] === '%') {
+      if (i > p) {
+        res += str.substring(p, i)
+        p = i
+      }
+      this.buffer = ''
+      ++p
+    }
+  }
+  if (p < len && this.buffer === undefined) { res += str.substring(p) }
+  return res
+}
+Decoder.prototype.reset = function () {
+  this.buffer = undefined
+}
+
+module.exports = Decoder
+
+
+/***/ }),
+
+/***/ 8647:
+/***/ ((module) => {
+
+
+
+module.exports = function basename (path) {
+  if (typeof path !== 'string') { return '' }
+  for (var i = path.length - 1; i >= 0; --i) { // eslint-disable-line no-var
+    switch (path.charCodeAt(i)) {
+      case 0x2F: // '/'
+      case 0x5C: // '\'
+        path = path.slice(i + 1)
+        return (path === '..' || path === '.' ? '' : path)
+    }
+  }
+  return (path === '..' || path === '.' ? '' : path)
+}
+
+
+/***/ }),
+
+/***/ 4619:
+/***/ (function(module) {
+
+
+
+// Node has always utf-8
+const utf8Decoder = new TextDecoder('utf-8')
+const textDecoders = new Map([
+  ['utf-8', utf8Decoder],
+  ['utf8', utf8Decoder]
+])
+
+function getDecoder (charset) {
+  let lc
+  while (true) {
+    switch (charset) {
+      case 'utf-8':
+      case 'utf8':
+        return decoders.utf8
+      case 'latin1':
+      case 'ascii': // TODO: Make these a separate, strict decoder?
+      case 'us-ascii':
+      case 'iso-8859-1':
+      case 'iso8859-1':
+      case 'iso88591':
+      case 'iso_8859-1':
+      case 'windows-1252':
+      case 'iso_8859-1:1987':
+      case 'cp1252':
+      case 'x-cp1252':
+        return decoders.latin1
+      case 'utf16le':
+      case 'utf-16le':
+      case 'ucs2':
+      case 'ucs-2':
+        return decoders.utf16le
+      case 'base64':
+        return decoders.base64
+      default:
+        if (lc === undefined) {
+          lc = true
+          charset = charset.toLowerCase()
+          continue
+        }
+        return decoders.other.bind(charset)
+    }
+  }
+}
+
+const decoders = {
+  utf8: (data, sourceEncoding) => {
+    if (data.length === 0) {
+      return ''
+    }
+    if (typeof data === 'string') {
+      data = Buffer.from(data, sourceEncoding)
+    }
+    return data.utf8Slice(0, data.length)
+  },
+
+  latin1: (data, sourceEncoding) => {
+    if (data.length === 0) {
+      return ''
+    }
+    if (typeof data === 'string') {
+      return data
+    }
+    return data.latin1Slice(0, data.length)
+  },
+
+  utf16le: (data, sourceEncoding) => {
+    if (data.length === 0) {
+      return ''
+    }
+    if (typeof data === 'string') {
+      data = Buffer.from(data, sourceEncoding)
+    }
+    return data.ucs2Slice(0, data.length)
+  },
+
+  base64: (data, sourceEncoding) => {
+    if (data.length === 0) {
+      return ''
+    }
+    if (typeof data === 'string') {
+      data = Buffer.from(data, sourceEncoding)
+    }
+    return data.base64Slice(0, data.length)
+  },
+
+  other: (data, sourceEncoding) => {
+    if (data.length === 0) {
+      return ''
+    }
+    if (typeof data === 'string') {
+      data = Buffer.from(data, sourceEncoding)
+    }
+
+    if (textDecoders.has(this.toString())) {
+      try {
+        return textDecoders.get(this).decode(data)
+      } catch {}
+    }
+    return typeof data === 'string'
+      ? data
+      : data.toString()
+  }
+}
+
+function decodeText (text, sourceEncoding, destEncoding) {
+  if (text) {
+    return getDecoder(destEncoding)(text, sourceEncoding)
+  }
+  return text
+}
+
+module.exports = decodeText
+
+
+/***/ }),
+
+/***/ 1467:
+/***/ ((module) => {
+
+
+
+module.exports = function getLimit (limits, name, defaultLimit) {
+  if (
+    !limits ||
+    limits[name] === undefined ||
+    limits[name] === null
+  ) { return defaultLimit }
+
+  if (
+    typeof limits[name] !== 'number' ||
+    isNaN(limits[name])
+  ) { throw new TypeError('Limit ' + name + ' is not a valid number') }
+
+  return limits[name]
+}
+
+
+/***/ }),
+
+/***/ 1854:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+/* eslint-disable object-property-newline */
+
+
+const decodeText = __nccwpck_require__(4619)
+
+const RE_ENCODED = /%[a-fA-F0-9][a-fA-F0-9]/g
+
+const EncodedLookup = {
+  '%00': '\x00', '%01': '\x01', '%02': '\x02', '%03': '\x03', '%04': '\x04',
+  '%05': '\x05', '%06': '\x06', '%07': '\x07', '%08': '\x08', '%09': '\x09',
+  '%0a': '\x0a', '%0A': '\x0a', '%0b': '\x0b', '%0B': '\x0b', '%0c': '\x0c',
+  '%0C': '\x0c', '%0d': '\x0d', '%0D': '\x0d', '%0e': '\x0e', '%0E': '\x0e',
+  '%0f': '\x0f', '%0F': '\x0f', '%10': '\x10', '%11': '\x11', '%12': '\x12',
+  '%13': '\x13', '%14': '\x14', '%15': '\x15', '%16': '\x16', '%17': '\x17',
+  '%18': '\x18', '%19': '\x19', '%1a': '\x1a', '%1A': '\x1a', '%1b': '\x1b',
+  '%1B': '\x1b', '%1c': '\x1c', '%1C': '\x1c', '%1d': '\x1d', '%1D': '\x1d',
+  '%1e': '\x1e', '%1E': '\x1e', '%1f': '\x1f', '%1F': '\x1f', '%20': '\x20',
+  '%21': '\x21', '%22': '\x22', '%23': '\x23', '%24': '\x24', '%25': '\x25',
+  '%26': '\x26', '%27': '\x27', '%28': '\x28', '%29': '\x29', '%2a': '\x2a',
+  '%2A': '\x2a', '%2b': '\x2b', '%2B': '\x2b', '%2c': '\x2c', '%2C': '\x2c',
+  '%2d': '\x2d', '%2D': '\x2d', '%2e': '\x2e', '%2E': '\x2e', '%2f': '\x2f',
+  '%2F': '\x2f', '%30': '\x30', '%31': '\x31', '%32': '\x32', '%33': '\x33',
+  '%34': '\x34', '%35': '\x35', '%36': '\x36', '%37': '\x37', '%38': '\x38',
+  '%39': '\x39', '%3a': '\x3a', '%3A': '\x3a', '%3b': '\x3b', '%3B': '\x3b',
+  '%3c': '\x3c', '%3C': '\x3c', '%3d': '\x3d', '%3D': '\x3d', '%3e': '\x3e',
+  '%3E': '\x3e', '%3f': '\x3f', '%3F': '\x3f', '%40': '\x40', '%41': '\x41',
+  '%42': '\x42', '%43': '\x43', '%44': '\x44', '%45': '\x45', '%46': '\x46',
+  '%47': '\x47', '%48': '\x48', '%49': '\x49', '%4a': '\x4a', '%4A': '\x4a',
+  '%4b': '\x4b', '%4B': '\x4b', '%4c': '\x4c', '%4C': '\x4c', '%4d': '\x4d',
+  '%4D': '\x4d', '%4e': '\x4e', '%4E': '\x4e', '%4f': '\x4f', '%4F': '\x4f',
+  '%50': '\x50', '%51': '\x51', '%52': '\x52', '%53': '\x53', '%54': '\x54',
+  '%55': '\x55', '%56': '\x56', '%57': '\x57', '%58': '\x58', '%59': '\x59',
+  '%5a': '\x5a', '%5A': '\x5a', '%5b': '\x5b', '%5B': '\x5b', '%5c': '\x5c',
+  '%5C': '\x5c', '%5d': '\x5d', '%5D': '\x5d', '%5e': '\x5e', '%5E': '\x5e',
+  '%5f': '\x5f', '%5F': '\x5f', '%60': '\x60', '%61': '\x61', '%62': '\x62',
+  '%63': '\x63', '%64': '\x64', '%65': '\x65', '%66': '\x66', '%67': '\x67',
+  '%68': '\x68', '%69': '\x69', '%6a': '\x6a', '%6A': '\x6a', '%6b': '\x6b',
+  '%6B': '\x6b', '%6c': '\x6c', '%6C': '\x6c', '%6d': '\x6d', '%6D': '\x6d',
+  '%6e': '\x6e', '%6E': '\x6e', '%6f': '\x6f', '%6F': '\x6f', '%70': '\x70',
+  '%71': '\x71', '%72': '\x72', '%73': '\x73', '%74': '\x74', '%75': '\x75',
+  '%76': '\x76', '%77': '\x77', '%78': '\x78', '%79': '\x79', '%7a': '\x7a',
+  '%7A': '\x7a', '%7b': '\x7b', '%7B': '\x7b', '%7c': '\x7c', '%7C': '\x7c',
+  '%7d': '\x7d', '%7D': '\x7d', '%7e': '\x7e', '%7E': '\x7e', '%7f': '\x7f',
+  '%7F': '\x7f', '%80': '\x80', '%81': '\x81', '%82': '\x82', '%83': '\x83',
+  '%84': '\x84', '%85': '\x85', '%86': '\x86', '%87': '\x87', '%88': '\x88',
+  '%89': '\x89', '%8a': '\x8a', '%8A': '\x8a', '%8b': '\x8b', '%8B': '\x8b',
+  '%8c': '\x8c', '%8C': '\x8c', '%8d': '\x8d', '%8D': '\x8d', '%8e': '\x8e',
+  '%8E': '\x8e', '%8f': '\x8f', '%8F': '\x8f', '%90': '\x90', '%91': '\x91',
+  '%92': '\x92', '%93': '\x93', '%94': '\x94', '%95': '\x95', '%96': '\x96',
+  '%97': '\x97', '%98': '\x98', '%99': '\x99', '%9a': '\x9a', '%9A': '\x9a',
+  '%9b': '\x9b', '%9B': '\x9b', '%9c': '\x9c', '%9C': '\x9c', '%9d': '\x9d',
+  '%9D': '\x9d', '%9e': '\x9e', '%9E': '\x9e', '%9f': '\x9f', '%9F': '\x9f',
+  '%a0': '\xa0', '%A0': '\xa0', '%a1': '\xa1', '%A1': '\xa1', '%a2': '\xa2',
+  '%A2': '\xa2', '%a3': '\xa3', '%A3': '\xa3', '%a4': '\xa4', '%A4': '\xa4',
+  '%a5': '\xa5', '%A5': '\xa5', '%a6': '\xa6', '%A6': '\xa6', '%a7': '\xa7',
+  '%A7': '\xa7', '%a8': '\xa8', '%A8': '\xa8', '%a9': '\xa9', '%A9': '\xa9',
+  '%aa': '\xaa', '%Aa': '\xaa', '%aA': '\xaa', '%AA': '\xaa', '%ab': '\xab',
+  '%Ab': '\xab', '%aB': '\xab', '%AB': '\xab', '%ac': '\xac', '%Ac': '\xac',
+  '%aC': '\xac', '%AC': '\xac', '%ad': '\xad', '%Ad': '\xad', '%aD': '\xad',
+  '%AD': '\xad', '%ae': '\xae', '%Ae': '\xae', '%aE': '\xae', '%AE': '\xae',
+  '%af': '\xaf', '%Af': '\xaf', '%aF': '\xaf', '%AF': '\xaf', '%b0': '\xb0',
+  '%B0': '\xb0', '%b1': '\xb1', '%B1': '\xb1', '%b2': '\xb2', '%B2': '\xb2',
+  '%b3': '\xb3', '%B3': '\xb3', '%b4': '\xb4', '%B4': '\xb4', '%b5': '\xb5',
+  '%B5': '\xb5', '%b6': '\xb6', '%B6': '\xb6', '%b7': '\xb7', '%B7': '\xb7',
+  '%b8': '\xb8', '%B8': '\xb8', '%b9': '\xb9', '%B9': '\xb9', '%ba': '\xba',
+  '%Ba': '\xba', '%bA': '\xba', '%BA': '\xba', '%bb': '\xbb', '%Bb': '\xbb',
+  '%bB': '\xbb', '%BB': '\xbb', '%bc': '\xbc', '%Bc': '\xbc', '%bC': '\xbc',
+  '%BC': '\xbc', '%bd': '\xbd', '%Bd': '\xbd', '%bD': '\xbd', '%BD': '\xbd',
+  '%be': '\xbe', '%Be': '\xbe', '%bE': '\xbe', '%BE': '\xbe', '%bf': '\xbf',
+  '%Bf': '\xbf', '%bF': '\xbf', '%BF': '\xbf', '%c0': '\xc0', '%C0': '\xc0',
+  '%c1': '\xc1', '%C1': '\xc1', '%c2': '\xc2', '%C2': '\xc2', '%c3': '\xc3',
+  '%C3': '\xc3', '%c4': '\xc4', '%C4': '\xc4', '%c5': '\xc5', '%C5': '\xc5',
+  '%c6': '\xc6', '%C6': '\xc6', '%c7': '\xc7', '%C7': '\xc7', '%c8': '\xc8',
+  '%C8': '\xc8', '%c9': '\xc9', '%C9': '\xc9', '%ca': '\xca', '%Ca': '\xca',
+  '%cA': '\xca', '%CA': '\xca', '%cb': '\xcb', '%Cb': '\xcb', '%cB': '\xcb',
+  '%CB': '\xcb', '%cc': '\xcc', '%Cc': '\xcc', '%cC': '\xcc', '%CC': '\xcc',
+  '%cd': '\xcd', '%Cd': '\xcd', '%cD': '\xcd', '%CD': '\xcd', '%ce': '\xce',
+  '%Ce': '\xce', '%cE': '\xce', '%CE': '\xce', '%cf': '\xcf', '%Cf': '\xcf',
+  '%cF': '\xcf', '%CF': '\xcf', '%d0': '\xd0', '%D0': '\xd0', '%d1': '\xd1',
+  '%D1': '\xd1', '%d2': '\xd2', '%D2': '\xd2', '%d3': '\xd3', '%D3': '\xd3',
+  '%d4': '\xd4', '%D4': '\xd4', '%d5': '\xd5', '%D5': '\xd5', '%d6': '\xd6',
+  '%D6': '\xd6', '%d7': '\xd7', '%D7': '\xd7', '%d8': '\xd8', '%D8': '\xd8',
+  '%d9': '\xd9', '%D9': '\xd9', '%da': '\xda', '%Da': '\xda', '%dA': '\xda',
+  '%DA': '\xda', '%db': '\xdb', '%Db': '\xdb', '%dB': '\xdb', '%DB': '\xdb',
+  '%dc': '\xdc', '%Dc': '\xdc', '%dC': '\xdc', '%DC': '\xdc', '%dd': '\xdd',
+  '%Dd': '\xdd', '%dD': '\xdd', '%DD': '\xdd', '%de': '\xde', '%De': '\xde',
+  '%dE': '\xde', '%DE': '\xde', '%df': '\xdf', '%Df': '\xdf', '%dF': '\xdf',
+  '%DF': '\xdf', '%e0': '\xe0', '%E0': '\xe0', '%e1': '\xe1', '%E1': '\xe1',
+  '%e2': '\xe2', '%E2': '\xe2', '%e3': '\xe3', '%E3': '\xe3', '%e4': '\xe4',
+  '%E4': '\xe4', '%e5': '\xe5', '%E5': '\xe5', '%e6': '\xe6', '%E6': '\xe6',
+  '%e7': '\xe7', '%E7': '\xe7', '%e8': '\xe8', '%E8': '\xe8', '%e9': '\xe9',
+  '%E9': '\xe9', '%ea': '\xea', '%Ea': '\xea', '%eA': '\xea', '%EA': '\xea',
+  '%eb': '\xeb', '%Eb': '\xeb', '%eB': '\xeb', '%EB': '\xeb', '%ec': '\xec',
+  '%Ec': '\xec', '%eC': '\xec', '%EC': '\xec', '%ed': '\xed', '%Ed': '\xed',
+  '%eD': '\xed', '%ED': '\xed', '%ee': '\xee', '%Ee': '\xee', '%eE': '\xee',
+  '%EE': '\xee', '%ef': '\xef', '%Ef': '\xef', '%eF': '\xef', '%EF': '\xef',
+  '%f0': '\xf0', '%F0': '\xf0', '%f1': '\xf1', '%F1': '\xf1', '%f2': '\xf2',
+  '%F2': '\xf2', '%f3': '\xf3', '%F3': '\xf3', '%f4': '\xf4', '%F4': '\xf4',
+  '%f5': '\xf5', '%F5': '\xf5', '%f6': '\xf6', '%F6': '\xf6', '%f7': '\xf7',
+  '%F7': '\xf7', '%f8': '\xf8', '%F8': '\xf8', '%f9': '\xf9', '%F9': '\xf9',
+  '%fa': '\xfa', '%Fa': '\xfa', '%fA': '\xfa', '%FA': '\xfa', '%fb': '\xfb',
+  '%Fb': '\xfb', '%fB': '\xfb', '%FB': '\xfb', '%fc': '\xfc', '%Fc': '\xfc',
+  '%fC': '\xfc', '%FC': '\xfc', '%fd': '\xfd', '%Fd': '\xfd', '%fD': '\xfd',
+  '%FD': '\xfd', '%fe': '\xfe', '%Fe': '\xfe', '%fE': '\xfe', '%FE': '\xfe',
+  '%ff': '\xff', '%Ff': '\xff', '%fF': '\xff', '%FF': '\xff'
+}
+
+function encodedReplacer (match) {
+  return EncodedLookup[match]
+}
+
+const STATE_KEY = 0
+const STATE_VALUE = 1
+const STATE_CHARSET = 2
+const STATE_LANG = 3
+
+function parseParams (str) {
+  const res = []
+  let state = STATE_KEY
+  let charset = ''
+  let inquote = false
+  let escaping = false
+  let p = 0
+  let tmp = ''
+  const len = str.length
+
+  for (var i = 0; i < len; ++i) { // eslint-disable-line no-var
+    const char = str[i]
+    if (char === '\\' && inquote) {
+      if (escaping) { escaping = false } else {
+        escaping = true
+        continue
+      }
+    } else if (char === '"') {
+      if (!escaping) {
+        if (inquote) {
+          inquote = false
+          state = STATE_KEY
+        } else { inquote = true }
+        continue
+      } else { escaping = false }
+    } else {
+      if (escaping && inquote) { tmp += '\\' }
+      escaping = false
+      if ((state === STATE_CHARSET || state === STATE_LANG) && char === "'") {
+        if (state === STATE_CHARSET) {
+          state = STATE_LANG
+          charset = tmp.substring(1)
+        } else { state = STATE_VALUE }
+        tmp = ''
+        continue
+      } else if (state === STATE_KEY &&
+        (char === '*' || char === '=') &&
+        res.length) {
+        state = char === '*'
+          ? STATE_CHARSET
+          : STATE_VALUE
+        res[p] = [tmp, undefined]
+        tmp = ''
+        continue
+      } else if (!inquote && char === ';') {
+        state = STATE_KEY
+        if (charset) {
+          if (tmp.length) {
+            tmp = decodeText(tmp.replace(RE_ENCODED, encodedReplacer),
+              'binary',
+              charset)
+          }
+          charset = ''
+        } else if (tmp.length) {
+          tmp = decodeText(tmp, 'binary', 'utf8')
+        }
+        if (res[p] === undefined) { res[p] = tmp } else { res[p][1] = tmp }
+        tmp = ''
+        ++p
+        continue
+      } else if (!inquote && (char === ' ' || char === '\t')) { continue }
+    }
+    tmp += char
+  }
+  if (charset && tmp.length) {
+    tmp = decodeText(tmp.replace(RE_ENCODED, encodedReplacer),
+      'binary',
+      charset)
+  } else if (tmp) {
+    tmp = decodeText(tmp, 'binary', 'utf8')
+  }
+
+  if (res[p] === undefined) {
+    if (tmp) { res[p] = tmp }
+  } else { res[p][1] = tmp }
+
+  return res
+}
+
+module.exports = parseParams
+
 
 /***/ })
 
@@ -60085,6 +60622,18 @@ __webpack_async_result__();
 /******/ 	};
 /******/ })();
 /******/ 
+/******/ /* webpack/runtime/compat get default export */
+/******/ (() => {
+/******/ 	// getDefaultExport function for compatibility with non-harmony modules
+/******/ 	__nccwpck_require__.n = (module) => {
+/******/ 		var getter = module && module.__esModule ?
+/******/ 			() => (module['default']) :
+/******/ 			() => (module);
+/******/ 		__nccwpck_require__.d(getter, { a: getter });
+/******/ 		return getter;
+/******/ 	};
+/******/ })();
+/******/ 
 /******/ /* webpack/runtime/define property getters */
 /******/ (() => {
 /******/ 	// define getter functions for harmony exports
@@ -60111,7 +60660,7 @@ __webpack_async_result__();
 /******/ // startup
 /******/ // Load entry module and return exports
 /******/ // This entry module used 'module' so it can't be inlined
-/******/ var __webpack_exports__ = __nccwpck_require__(2092);
+/******/ var __webpack_exports__ = __nccwpck_require__(399);
 /******/ __webpack_exports__ = await __webpack_exports__;
 /******/ 
 
