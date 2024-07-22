@@ -1,7 +1,7 @@
 import process from "node:process"
 // eslint-disable-next-line import/no-unresolved
-import {Octokit} from "@octokit/action"
-import type {components} from "@octokit/openapi-types"
+import { Octokit } from "@octokit/action"
+import type { components } from "@octokit/openapi-types"
 
 type ReleaseAsset = components["schemas"]["release-asset"]
 
@@ -16,7 +16,7 @@ export default async function getDownloadLink(
   version = "latest",
   platform = "host",
   architecture = "host"
-): Promise<{path: string; asset: string}> {
+): Promise<{ path: string; asset: string }> {
   const release = await getRelease(version)
 
   if (platform === "host") {
@@ -31,7 +31,7 @@ export default async function getDownloadLink(
   const asset = findAsset(release.assets, release.version, platform, architecture)
 
   if (asset) {
-    return {asset: asset.name, path: asset.browser_download_url}
+    return { asset: asset.name, path: asset.browser_download_url }
   } else {
     throw new Error(`No ${version} Z3 asset for ${architecture} ${platform} found.`)
   }
@@ -72,21 +72,21 @@ function determineArchitecture(): string {
  * @param version - Z3 release version (defaults to latest)
  * @returns {Promise<{assets: ReleaseAsset[], version: string}>} - list of assets of a Z3 release and the release version
  */
-async function getRelease(version: string): Promise<{assets: ReleaseAsset[]; version: string}> {
+async function getRelease(version: string): Promise<{ assets: ReleaseAsset[]; version: string }> {
   const octokit = new Octokit()
   if (version === "latest") {
     const response = await octokit.request("GET /repos/{owner}/{repo}/releases/latest", {
       owner: "Z3Prover",
       repo: "z3"
     })
-    return {assets: response.data.assets, version: response.data.tag_name}
+    return { assets: response.data.assets, version: response.data.tag_name }
   } else {
     const response = await octokit.request("GET /repos/{owner}/{repo}/releases/tags/z3-{tag}", {
       owner: "Z3Prover",
       repo: "z3",
       tag: version
     })
-    return {assets: response.data.assets, version: response.data.tag_name}
+    return { assets: response.data.assets, version: response.data.tag_name }
   }
 }
 

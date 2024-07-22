@@ -12,10 +12,10 @@ import process from "node:process"
  * @returns {Promise<void>}
  */
 async function run(): Promise<void> {
-  const version = core.getInput("version", {required: true})
-  const platform = core.getInput("platform", {required: true})
-  const architecture = core.getInput("architecture", {required: true})
-  const addToLibraryPath = core.getBooleanInput("add_to_library_path", {required: false})
+  const version = core.getInput("version", { required: true })
+  const platform = core.getInput("platform", { required: true })
+  const architecture = core.getInput("architecture", { required: true })
+  const addToLibraryPath = core.getBooleanInput("add_to_library_path", { required: false })
 
   core.debug("==> Determining Z3 asset URL")
   const url = await getDownloadLink(version, platform, architecture)
