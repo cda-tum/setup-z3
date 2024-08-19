@@ -1,4 +1,3 @@
-/*eslint import/no-unresolved: [2, { ignore: ['\\get-download-link.js$'] }]*/
 import * as core from "@actions/core"
 import * as exec from "@actions/exec"
 import * as io from "@actions/io"
@@ -20,13 +19,13 @@ async function run(): Promise<void> {
   core.debug("==> Determining Z3 asset URL")
   const url = await getDownloadLink(version, platform, architecture)
   core.debug(`==> Downloading Z3 asset: ${url.path}`)
-  const file = await tc.downloadTool(`${url.path}`)
+  const file = await tc.downloadTool(url.path)
   core.debug("==> Extracting Z3 asset")
   const dir = await tc.extractZip(path.resolve(file))
   core.debug("==> Adding Z3 to tool cache")
   const cachedPath = await tc.cacheDir(dir, "z3", version)
 
-  const z3Root = path.join(cachedPath, `${url.asset.replace(/\.zip$/, "")}`)
+  const z3Root = path.join(cachedPath, url.asset.replace(/\.zip$/, ""))
   core.setOutput("z3-root", z3Root)
 
   core.debug("==> Adding Z3 to PATH")
@@ -91,7 +90,8 @@ try {
 function appendEnv(varName: string, value: string): void {
   const sep = process.platform === "win32" ? ";" : ":"
   if (varName in process.env) {
-    core.exportVariable(varName, process.env[varName] + sep + value)
+    const envVar = process.env[varName] ?? ""
+    core.exportVariable(varName, envVar + sep + value)
   } else {
     core.exportVariable(varName, value)
   }

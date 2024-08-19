@@ -58347,7 +58347,6 @@ function getApiBaseUrl() {
 
 ;// CONCATENATED MODULE: ./src/get-download-link.ts
 
-// eslint-disable-next-line import/no-unresolved
 
 /**
  * Determine the URL of the Z3 release asset for the given platform and architecture.
@@ -58426,6 +58425,7 @@ async function getRelease(version) {
             repo: "z3",
             tag: version
         });
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
         return { assets: response.data.assets, version: response.data.tag_name };
     }
 }
@@ -58470,7 +58470,6 @@ __nccwpck_require__.a(module, async (__webpack_handle_async_dependencies__, __we
 /* harmony import */ var node_path__WEBPACK_IMPORTED_MODULE_5___default = /*#__PURE__*/__nccwpck_require__.n(node_path__WEBPACK_IMPORTED_MODULE_5__);
 /* harmony import */ var node_process__WEBPACK_IMPORTED_MODULE_6__ = __nccwpck_require__(7742);
 /* harmony import */ var node_process__WEBPACK_IMPORTED_MODULE_6___default = /*#__PURE__*/__nccwpck_require__.n(node_process__WEBPACK_IMPORTED_MODULE_6__);
-/*eslint import/no-unresolved: [2, { ignore: ['\\get-download-link.js$'] }]*/
 
 
 
@@ -58490,12 +58489,12 @@ async function run() {
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Determining Z3 asset URL");
     const url = await (0,_get_download_link_js__WEBPACK_IMPORTED_MODULE_4__/* ["default"] */ .Z)(version, platform, architecture);
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug(`==> Downloading Z3 asset: ${url.path}`);
-    const file = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__.downloadTool(`${url.path}`);
+    const file = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__.downloadTool(url.path);
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Extracting Z3 asset");
     const dir = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__.extractZip(node_path__WEBPACK_IMPORTED_MODULE_5___default().resolve(file));
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to tool cache");
     const cachedPath = await _actions_tool_cache__WEBPACK_IMPORTED_MODULE_3__.cacheDir(dir, "z3", version);
-    const z3Root = node_path__WEBPACK_IMPORTED_MODULE_5___default().join(cachedPath, `${url.asset.replace(/\.zip$/, "")}`);
+    const z3Root = node_path__WEBPACK_IMPORTED_MODULE_5___default().join(cachedPath, url.asset.replace(/\.zip$/, ""));
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.setOutput("z3-root", z3Root);
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.debug("==> Adding Z3 to PATH");
     _actions_core__WEBPACK_IMPORTED_MODULE_0__.addPath(node_path__WEBPACK_IMPORTED_MODULE_5___default().join(z3Root, "bin"));
@@ -58559,7 +58558,8 @@ catch (error) {
 function appendEnv(varName, value) {
     const sep = (node_process__WEBPACK_IMPORTED_MODULE_6___default().platform) === "win32" ? ";" : ":";
     if (varName in (node_process__WEBPACK_IMPORTED_MODULE_6___default().env)) {
-        _actions_core__WEBPACK_IMPORTED_MODULE_0__.exportVariable(varName, (node_process__WEBPACK_IMPORTED_MODULE_6___default().env)[varName] + sep + value);
+        const envVar = (node_process__WEBPACK_IMPORTED_MODULE_6___default().env)[varName] ?? "";
+        _actions_core__WEBPACK_IMPORTED_MODULE_0__.exportVariable(varName, envVar + sep + value);
     }
     else {
         _actions_core__WEBPACK_IMPORTED_MODULE_0__.exportVariable(varName, value);
