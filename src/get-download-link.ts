@@ -1,5 +1,4 @@
 import process from "node:process"
-// eslint-disable-next-line import/no-unresolved
 import { Octokit } from "@octokit/action"
 import type { components } from "@octokit/openapi-types"
 
@@ -86,6 +85,7 @@ async function getRelease(version: string): Promise<{ assets: ReleaseAsset[]; ve
       repo: "z3",
       tag: version
     })
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
     return { assets: response.data.assets, version: response.data.tag_name }
   }
 }

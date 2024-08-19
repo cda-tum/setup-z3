@@ -40,7 +40,7 @@ describe("Z3 Setup Tests", () => {
   ]
 
   for (const { name, version, platform, architecture, addToLibraryPath } of testCases) {
-    test(`${name}`, async () => {
+    test(name, async () => {
       const ret = await executeTest(version, platform, architecture, addToLibraryPath)
       expect(ret).toEqual(0)
     })
