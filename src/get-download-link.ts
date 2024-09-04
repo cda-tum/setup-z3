@@ -1,5 +1,5 @@
 import process from "node:process"
-import { Octokit } from "@octokit/action"
+import { Octokit } from "@octokit/core"
 import type { components } from "@octokit/openapi-types"
 
 type ReleaseAsset = components["schemas"]["release-asset"]
