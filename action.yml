@@ -18,6 +18,10 @@ inputs:
     description: "Add Z3 to the library path variables, such that it can be used as a static/dynamic library. Defaults to false."
     required: false
     default: "false"
+  token:
+    description: "The token that the action will use to query the GitHub API. Defaults to the repository's GitHub token."
+    required: false
+    default: ${{ github.token }}
 outputs:
   z3-root:
     description: "The root directory of the Z3 installation"

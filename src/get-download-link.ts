@@ -1,22 +1,24 @@
 import process from "node:process"
-import { Octokit } from "@octokit/action"
+import { Octokit, OctokitOptions } from "@octokit/core"
 import type { components } from "@octokit/openapi-types"
 
 type ReleaseAsset = components["schemas"]["release-asset"]
 
 /**
  * Determine the URL of the Z3 release asset for the given platform and architecture.
+ * @param {string} token - GitHub token
  * @param {string} version - Z3 release version (defaults to latest)
  * @param {string} platform - platform to look for (either host, linux, macOS, or windows)
  * @param {string} architecture - architecture to look for (either host, x64, x86, or arm64)
  * @returns {{path: string, asset: string}} - URL path for the Z3 release assets and the asset name
  */
 export default async function getDownloadLink(
+  token: string,
   version = "latest",
   platform = "host",
   architecture = "host"
 ): Promise<{ path: string; asset: string }> {
-  const release = await getRelease(version)
+  const release = await getRelease(token, version)
 
   if (platform === "host") {
     platform = determinePlatform()
@@ -68,11 +70,16 @@ function determineArchitecture(): string {
 
 /**
  * Get the Z3 release assets for the given version from GitHub.
+ * @param {string} token - GitHub token
  * @param version - Z3 release version (defaults to latest)
  * @returns {Promise<{assets: ReleaseAsset[], version: string}>} - list of assets of a Z3 release and the release version
  */
-async function getRelease(version: string): Promise<{ assets: ReleaseAsset[]; version: string }> {
-  const octokit = new Octokit()
+async function getRelease(token: string, version: string): Promise<{ assets: ReleaseAsset[]; version: string }> {
+  const options: OctokitOptions = {}
+  if (token) {
+    options.auth = token // Simplified the template literal expression
+  }
+  const octokit = new Octokit(options)
   if (version === "latest") {
     const response = await octokit.request("GET /repos/{owner}/{repo}/releases/latest", {
       owner: "Z3Prover",

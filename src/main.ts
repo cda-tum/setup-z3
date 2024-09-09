@@ -15,9 +15,10 @@ async function run(): Promise<void> {
   const platform = core.getInput("platform", { required: true })
   const architecture = core.getInput("architecture", { required: true })
   const addToLibraryPath = core.getBooleanInput("add_to_library_path", { required: false })
+  const token = core.getInput("token", { required: false })
 
   core.debug("==> Determining Z3 asset URL")
-  const url = await getDownloadLink(version, platform, architecture)
+  const url = await getDownloadLink(token, version, platform, architecture)
   core.debug(`==> Downloading Z3 asset: ${url.path}`)
   const file = await tc.downloadTool(url.path)
   core.debug("==> Extracting Z3 asset")
