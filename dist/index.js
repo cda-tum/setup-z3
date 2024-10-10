@@ -29246,7 +29246,10 @@ class Octokit {
 }
 
 
+// EXTERNAL MODULE: ./node_modules/@actions/core/lib/core.js
+var core = __nccwpck_require__(7484);
 ;// CONCATENATED MODULE: ./src/get-download-link.ts
+
 
 
 /**
@@ -29267,6 +29270,7 @@ async function getDownloadLink(token, version = "latest", platform = "host", arc
     }
     // determine the file name of the Z3 release depending on the platform and architecture
     const asset = findAsset(release.assets, release.version, platform, architecture);
+    core.debug(`==> Got asset: ${asset}`);
     if (asset) {
         return { asset: asset.name, path: asset.browser_download_url };
     }
@@ -29327,7 +29331,10 @@ async function getRelease(token, version) {
         return { assets: response.data.assets, version: response.data.tag_name };
     }
     else {
-        const response = await octokit.request("GET /repos/{owner}/{repo}/releases/tags/z3-{tag}", {
+        // Unlike all other tags, 4.8.5 has an uppercase Z
+        version = version == "4.8.5" ? "Z3-4.8.5" : "z3-" + version;
+        core.debug(`==> Asking for tag: ${version}`);
+        const response = await octokit.request("GET /repos/{owner}/{repo}/releases/tags/{tag}", {
             owner: "Z3Prover",
             repo: "z3",
             tag: version
@@ -29345,6 +29352,9 @@ async function getRelease(token, version) {
  * @returns {(ReleaseAsset | undefined)} - Z3 release asset or undefined if not found
  */
 function findAsset(assets, version, platform, architecture) {
+    // 4.8.5 has an uppercase Z in the tag, but only there: the files still have a lowercase z.
+    // Replace it here so the regex works.
+    version = version == "Z3-4.8.5" ? "z3-4.8.5" : version;
     if (platform === "linux") {
         return assets.find(asset => RegExp(new RegExp(`^${version}-${architecture}-(ubuntu|glibc)-.*$`)).exec(asset.name));
     }

@@ -1,6 +1,7 @@
 import process from "node:process"
 import { Octokit, OctokitOptions } from "@octokit/core"
 import type { components } from "@octokit/openapi-types"
+import * as core from "@actions/core"
 
 type ReleaseAsset = components["schemas"]["release-asset"]
 
@@ -30,6 +31,7 @@ export default async function getDownloadLink(
 
   // determine the file name of the Z3 release depending on the platform and architecture
   const asset = findAsset(release.assets, release.version, platform, architecture)
+  core.debug(`==> Got asset: ${asset}`);
 
   if (asset) {
     return { asset: asset.name, path: asset.browser_download_url }
@@ -87,7 +89,10 @@ async function getRelease(token: string, version: string): Promise<{ assets: Rel
     })
     return { assets: response.data.assets, version: response.data.tag_name }
   } else {
-    const response = await octokit.request("GET /repos/{owner}/{repo}/releases/tags/z3-{tag}", {
+    // Unlike all other tags, 4.8.5 has an uppercase Z
+    version = version == "4.8.5" ? "Z3-4.8.5" : "z3-" + version;
+    core.debug(`==> Asking for tag: ${version}`);
+    const response = await octokit.request("GET /repos/{owner}/{repo}/releases/tags/{tag}", {
       owner: "Z3Prover",
       repo: "z3",
       tag: version
@@ -111,6 +116,11 @@ function findAsset(
   platform: string,
   architecture: string
 ): ReleaseAsset | undefined {
+
+  // 4.8.5 has an uppercase Z in the tag, but only there: the files still have a lowercase z.
+  // Replace it here so the regex works.
+  version = version == "Z3-4.8.5" ? "z3-4.8.5" : version;
+
   if (platform === "linux") {
     return assets.find(asset => RegExp(new RegExp(`^${version}-${architecture}-(ubuntu|glibc)-.*$`)).exec(asset.name))
   }
