@@ -113,21 +113,16 @@ function findAsset(
   platform: string,
   architecture: string
 ): ReleaseAsset | undefined {
-
-  // 4.8.5 has an uppercase Z in the tag, but only there: the files still have a lowercase z.
-  // Replace it here so the regex works.
-  version = version == "Z3-4.8.5" ? "z3-4.8.5" : version;
-
   if (platform === "linux") {
-    return assets.find(asset => RegExp(new RegExp(`^${version}-${architecture}-(ubuntu|glibc)-.*$`)).exec(asset.name))
+    return assets.find(asset => RegExp(`^${version}-${architecture}-(ubuntu|glibc)-.*$`, 'i').exec(asset.name))
   }
 
   if (platform === "macOS") {
-    return assets.find(asset => RegExp(new RegExp(`^${version}-${architecture}-osx-.*$`)).exec(asset.name))
+    return assets.find(asset => RegExp(`^${version}-${architecture}-osx-.*$`, 'i').exec(asset.name))
   }
 
   if (platform === "windows") {
-    return assets.find(asset => RegExp(new RegExp(`^${version}-${architecture}-win.*$`)).exec(asset.name))
+    return assets.find(asset => RegExp(`^${version}-${architecture}-win.*$`, 'i').exec(asset.name))
   }
 
   throw new Error(`Invalid platform: ${platform}`)
