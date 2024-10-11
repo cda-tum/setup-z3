@@ -36,7 +36,8 @@ describe("Z3 Setup Tests", () => {
     { name: "windows_latest", version: "latest", platform: "windows", addToLibraryPath: "true" },
     { name: "specific_version", version: "4.8.17" },
     { name: "old_version_macOS", version: "4.8.11", platform: "macOS", addToLibraryPath: "true" },
-    { name: "old_version_linux", version: "4.8.10", platform: "linux", addToLibraryPath: "true" }
+    { name: "old_version_linux", version: "4.8.10", platform: "linux", addToLibraryPath: "true" },
+    { name: "special_case_4.8.5", version: "4.8.5", platform: "linux" }
   ]
 
   for (const { name, version, platform, architecture, addToLibraryPath } of testCases) {

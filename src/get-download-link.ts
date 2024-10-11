@@ -87,12 +87,13 @@ async function getRelease(token: string, version: string): Promise<{ assets: Rel
     })
     return { assets: response.data.assets, version: response.data.tag_name }
   } else {
-    const response = await octokit.request("GET /repos/{owner}/{repo}/releases/tags/z3-{tag}", {
+    // Unlike all other tags, 4.8.5 has an uppercase Z
+    const tag = (version == "4.8.5") ? "Z3-4.8.5" : `z3-${version}`;
+    const response = await octokit.request("GET /repos/{owner}/{repo}/releases/tags/{tag}", {
       owner: "Z3Prover",
       repo: "z3",
-      tag: version
+      tag: tag
     })
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
     return { assets: response.data.assets, version: response.data.tag_name }
   }
 }
@@ -112,15 +113,15 @@ function findAsset(
   architecture: string
 ): ReleaseAsset | undefined {
   if (platform === "linux") {
-    return assets.find(asset => RegExp(new RegExp(`^${version}-${architecture}-(ubuntu|glibc)-.*$`)).exec(asset.name))
+    return assets.find(asset => RegExp(`^${version}-${architecture}-(ubuntu|glibc)-.*$`, 'i').exec(asset.name))
   }
 
   if (platform === "macOS") {
-    return assets.find(asset => RegExp(new RegExp(`^${version}-${architecture}-osx-.*$`)).exec(asset.name))
+    return assets.find(asset => RegExp(`^${version}-${architecture}-osx-.*$`, 'i').exec(asset.name))
   }
 
   if (platform === "windows") {
-    return assets.find(asset => RegExp(new RegExp(`^${version}-${architecture}-win.*$`)).exec(asset.name))
+    return assets.find(asset => RegExp(`^${version}-${architecture}-win.*$`, 'i').exec(asset.name))
   }
 
   throw new Error(`Invalid platform: ${platform}`)
