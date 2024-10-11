@@ -88,13 +88,12 @@ async function getRelease(token: string, version: string): Promise<{ assets: Rel
     return { assets: response.data.assets, version: response.data.tag_name }
   } else {
     // Unlike all other tags, 4.8.5 has an uppercase Z
-    version = version == "4.8.5" ? "Z3-4.8.5" : "z3-" + version;
+    const tag = (version == "4.8.5") ? "Z3-4.8.5" : `z3-${version}`;
     const response = await octokit.request("GET /repos/{owner}/{repo}/releases/tags/{tag}", {
       owner: "Z3Prover",
       repo: "z3",
-      tag: version
+      tag: tag
     })
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
     return { assets: response.data.assets, version: response.data.tag_name }
   }
 }
