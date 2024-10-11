@@ -29246,10 +29246,7 @@ class Octokit {
 }
 
 
-// EXTERNAL MODULE: ./node_modules/@actions/core/lib/core.js
-var core = __nccwpck_require__(7484);
 ;// CONCATENATED MODULE: ./src/get-download-link.ts
-
 
 
 /**
@@ -29270,7 +29267,6 @@ async function getDownloadLink(token, version = "latest", platform = "host", arc
     }
     // determine the file name of the Z3 release depending on the platform and architecture
     const asset = findAsset(release.assets, release.version, platform, architecture);
-    core.debug(`==> Got asset: ${asset}`);
     if (asset) {
         return { asset: asset.name, path: asset.browser_download_url };
     }
@@ -29332,14 +29328,12 @@ async function getRelease(token, version) {
     }
     else {
         // Unlike all other tags, 4.8.5 has an uppercase Z
-        version = version == "4.8.5" ? "Z3-4.8.5" : "z3-" + version;
-        core.debug(`==> Asking for tag: ${version}`);
+        const tag = (version == "4.8.5") ? "Z3-4.8.5" : `z3-${version}`;
         const response = await octokit.request("GET /repos/{owner}/{repo}/releases/tags/{tag}", {
             owner: "Z3Prover",
             repo: "z3",
-            tag: version
+            tag: tag
         });
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
         return { assets: response.data.assets, version: response.data.tag_name };
     }
 }
@@ -29352,17 +29346,14 @@ async function getRelease(token, version) {
  * @returns {(ReleaseAsset | undefined)} - Z3 release asset or undefined if not found
  */
 function findAsset(assets, version, platform, architecture) {
-    // 4.8.5 has an uppercase Z in the tag, but only there: the files still have a lowercase z.
-    // Replace it here so the regex works.
-    version = version == "Z3-4.8.5" ? "z3-4.8.5" : version;
     if (platform === "linux") {
-        return assets.find(asset => RegExp(new RegExp(`^${version}-${architecture}-(ubuntu|glibc)-.*$`)).exec(asset.name));
+        return assets.find(asset => RegExp(`^${version}-${architecture}-(ubuntu|glibc)-.*$`, 'i').exec(asset.name));
     }
     if (platform === "macOS") {
-        return assets.find(asset => RegExp(new RegExp(`^${version}-${architecture}-osx-.*$`)).exec(asset.name));
+        return assets.find(asset => RegExp(`^${version}-${architecture}-osx-.*$`, 'i').exec(asset.name));
     }
     if (platform === "windows") {
-        return assets.find(asset => RegExp(new RegExp(`^${version}-${architecture}-win.*$`)).exec(asset.name));
+        return assets.find(asset => RegExp(`^${version}-${architecture}-win.*$`, 'i').exec(asset.name));
     }
     throw new Error(`Invalid platform: ${platform}`);
 }
