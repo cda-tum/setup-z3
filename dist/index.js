@@ -28641,7 +28641,7 @@ class RequestError extends Error {
     if (options.request.headers.authorization) {
       requestCopy.headers = Object.assign({}, options.request.headers, {
         authorization: options.request.headers.authorization.replace(
-          / .*$/,
+          /(?<! ) .*$/,
           " [REDACTED]"
         )
       });
@@ -28747,7 +28747,7 @@ async function fetchWrapper(requestOptions) {
     data: ""
   };
   if ("deprecation" in responseHeaders) {
-    const matches = responseHeaders.link && responseHeaders.link.match(/<([^>]+)>; rel="deprecation"/);
+    const matches = responseHeaders.link && responseHeaders.link.match(/<([^<>]+)>; rel="deprecation"/);
     const deprecationLink = matches && matches.pop();
     log.warn(
       `[@octokit/request] "${requestOptions.method} ${requestOptions.url}" is deprecated. It is scheduled to be removed on ${responseHeaders.sunset}${deprecationLink ? `. See ${deprecationLink}` : ""}`
@@ -28788,7 +28788,7 @@ async function getResponseData(response) {
     return response.text().catch(() => "");
   }
   const mimetype = (0,fast_content_type_parse/* safeParse */.xL)(contentType);
-  if (mimetype.type === "application/json") {
+  if (isJSONResponse(mimetype)) {
     let text = "";
     try {
       text = await response.text();
@@ -28801,6 +28801,9 @@ async function getResponseData(response) {
   } else {
     return response.arrayBuffer().catch(() => new ArrayBuffer(0));
   }
+}
+function isJSONResponse(mimetype) {
+  return mimetype.type === "application/json" || mimetype.type === "application/scim+json";
 }
 function toErrorMessage(data) {
   if (typeof data === "string") {
