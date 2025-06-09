@@ -33,7 +33,7 @@
   "dependencies": {
     "@actions/core": "^1.11.1",
     "@actions/tool-cache": "^2.0.2",
-    "@octokit/core": "^6.1.5",
+    "@octokit/core": "^7.0.2",
     "@octokit/openapi-types": "^25.0.0",
     "node-fetch-retry": "^2.0.1"
   },
