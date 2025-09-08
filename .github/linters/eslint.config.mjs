@@ -10,7 +10,8 @@ export default tseslint.config(
   {
     languageOptions: {
       parserOptions: {
-        project: ["./.github/linters/tsconfig.json", "./tsconfig.json"]
+        project: ["./tsconfig.json", "../../tsconfig.json"],
+        tsconfigRootDir: import.meta.dirname
       }
     }
   },
