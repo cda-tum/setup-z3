@@ -41,18 +41,18 @@
     "@actions/exec": "^1.1.1",
     "@babel/preset-env": "^7.28.3",
     "@babel/preset-typescript": "^7.27.1",
-    "@eslint/js": "^9.34.0",
+    "@eslint/js": "^9.36.0",
     "@jest/globals": "^30.0.5",
     "@types/jest": "^30.0.0",
-    "@types/node": "^24.4.0",
-    "@vercel/ncc": "^0.38.3",
+    "@types/node": "^24.5.2",
+    "@vercel/ncc": "^0.38.4",
     "babel-jest": "^30.0.5",
-    "eslint": "^9.34.0",
+    "eslint": "^9.36.0",
     "eslint-plugin-jest": "^29.0.1",
     "jest": "^30.0.5",
     "js-yaml": "^4.1.0",
     "typescript": "^5.9.2",
-    "typescript-eslint": "^8.43.0"
+    "typescript-eslint": "^8.44.0"
   },
   "jest": {
     "verbose": true,
