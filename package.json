@@ -6,7 +6,7 @@
   "exports": "./dist/index.js",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "scripts": {
     "build": "npx ncc build src/main.ts -o dist --source-map --license licenses.txt",
