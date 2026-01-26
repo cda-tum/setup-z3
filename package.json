@@ -31,8 +31,8 @@
   },
   "homepage": "https://github.com/cda-tum/setup-z3#readme",
   "dependencies": {
-    "@actions/core": "^1.11.1",
-    "@actions/tool-cache": "^2.0.2",
+    "@actions/core": "^2.0.2",
+    "@actions/tool-cache": "^3.0.0",
     "@octokit/core": "^7.0.6",
     "@octokit/openapi-types": "^27.0.0",
     "node-fetch-retry": "^2.0.1"
