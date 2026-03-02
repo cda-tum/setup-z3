@@ -31712,7 +31712,7 @@ module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:net");
 /***/ 6760:
 /***/ ((module) => {
 
-module.exports = require("node:path");
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:path");
 
 /***/ }),
 
@@ -31726,7 +31726,7 @@ module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:perf_ho
 /***/ 1708:
 /***/ ((module) => {
 
-module.exports = require("node:process");
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:process");
 
 /***/ }),
 
