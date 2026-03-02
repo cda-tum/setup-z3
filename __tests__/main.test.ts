@@ -1,5 +1,11 @@
 import { exec } from "@actions/exec"
 import path from "path"
+import { fileURLToPath } from "url"
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+
+const TEST_TIMEOUT_MS = 60_000
 
 describe("Z3 Setup Tests", () => {
   const executeTest = async (
@@ -44,6 +50,6 @@ describe("Z3 Setup Tests", () => {
     test(name, async () => {
       const ret = await executeTest(version, platform, architecture, addToLibraryPath)
       expect(ret).toEqual(0)
-    })
+    }, TEST_TIMEOUT_MS)
   }
 })
