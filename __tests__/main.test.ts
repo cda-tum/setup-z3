@@ -1,5 +1,9 @@
 import { exec } from "@actions/exec"
 import path from "path"
+import { fileURLToPath } from "url"
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 describe("Z3 Setup Tests", () => {
   const executeTest = async (
