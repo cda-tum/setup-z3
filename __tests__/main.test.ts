@@ -1,4 +1,5 @@
 import { exec } from "@actions/exec"
+import { describe, expect, test } from "@jest/globals"
 import path from "path"
 import { fileURLToPath } from "url"
 
