@@ -10,7 +10,7 @@
     "strict": true,
     "noImplicitAny": true,
     "esModuleInterop": true,
-    "baseUrl": "./",
+    "types": ["node"],
     "sourceMap": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
