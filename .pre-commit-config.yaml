@@ -49,4 +49,4 @@ repos:
     rev: v3.9.5
     hooks:
       - id: prettier
-        types_or: [yaml, markdown, html, css, scss, javascript, json]
+        types_or: [yaml, markdown, html, css, scss, javascript, json, ts, tsx]
