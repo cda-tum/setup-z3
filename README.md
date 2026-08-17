@@ -9,7 +9,7 @@ To download the latest version of Z3 for the host platform and add it to the `PA
 ```yaml
 - name: Setup Z3
   id: z3
-  uses: cda-tum/setup-z3@v1
+  uses: cda-tum/setup-z3@v1.7.3
 ```
 
 This action creates a `z3-root` output variable that contains the path to the root directory of the Z3 installation and exports the `Z3_ROOT` environment variable for subsequent steps in a job. The output variable can be accessed as `${{ steps.z3.outputs.z3-root }}`.
@@ -21,7 +21,7 @@ In many cases, it is convenient to use a specific version of Z3. This can be don
 ```yaml
 - name: Setup Z3
   id: z3
-  uses: cda-tum/setup-z3@v1
+  uses: cda-tum/setup-z3@v1.7.3
   with:
     version: 4.11.2
 ```
@@ -36,7 +36,7 @@ If you want to explicitly specify the platform and architecture for which Z3 sho
 ```yaml
 - name: Setup Z3
   id: z3
-  uses: cda-tum/setup-z3@v1
+  uses: cda-tum/setup-z3@v1.7.3
   with:
     platform: macOS
     architecture: arm64
@@ -57,7 +57,7 @@ By default, the action only adds Z3 into `PATH`, meaning it cannot be used as a 
 ```yaml
 - name: Setup Z3
   id: z3
-  uses: cda-tum/setup-z3@v1
+  uses: cda-tum/setup-z3@v1.7.3
   with:
     add_to_library_path: true
 ```
