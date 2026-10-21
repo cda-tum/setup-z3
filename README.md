@@ -14,16 +14,11 @@ To download the latest version of Z3 for the host platform and add it to the `PA
 
 This action creates a `z3-root` output variable that contains the path to the root directory of the Z3 installation and exports the `Z3_ROOT` environment variable for subsequent steps in a job. The output variable can be accessed as `${{ steps.z3.outputs.z3-root }}`.
 
-### eMudhra CA incident: download trust
+### Temporary eMudhra CA mitigation
 
-The [October 2026 eMudhra incident](https://emudhra.we-have-a-problem.com/)
-affects HTTPS clients that still trust the compromised intermediates. This action
-looks up releases and downloads Z3 using the GitHub runner's Node 24 runtime, whose
-bundled CA store is independent of browser revocation updates. Updating the Z3
-version or adding certificates with `NODE_EXTRA_CA_CERTS` does not remove that trust.
-
-Until the runner supplies a patched Node runtime, Ubuntu 24.04 users can explicitly
-select a patched OpenSSL trust store for this action:
+An attacker controlling the network path can exploit the [eMudhra CA incident](https://emudhra.we-have-a-problem.com/)
+when this action's Node 24 runtime trusts an affected chain. On Ubuntu 24.04,
+select a patched OpenSSL store until the runner's Node trust store is verified fixed:
 
 ```yaml
 # Job prerequisite: runs-on: ubuntu-24.04
@@ -42,18 +37,14 @@ select a patched OpenSSL trust store for this action:
     NODE_EXTRA_CA_CERTS: ""
 ```
 
-The package check fails if the security update is unavailable; it checks the
-package version, not the effective trust store. Use the advisory's offline chain
-verification instructions to check that the final store rejects every affected
-chain. Review custom CA additions on self-hosted runners too.
+The [Ubuntu package gate](https://ubuntu.com/security/notices/USN-8944-1) fails if the update is unavailable. Verify the effective store,
+including self-hosted custom roots, against the advisory's affected chains.
 [Node's CA options](https://nodejs.org/api/cli.html#--use-bundled-ca---use-openssl-ca)
-select OpenSSL's store; merely setting `SSL_CERT_FILE` without that option does not
-replace Node's bundled store. This example is specific to Ubuntu 24.04. Other
-platforms need an independently verified patched trust store. Keep TLS verification
-enabled; never use `NODE_TLS_REJECT_UNAUTHORIZED=0` as a workaround.
-The step-level environment applies only to this action and replaces inherited
-`NODE_OPTIONS` for that step; other actions and container jobs need their own
-trust-store updates.
+are necessary: `SSL_CERT_FILE` alone does not replace bundled roots, and
+`NODE_EXTRA_CA_CERTS` only adds trust. This step replaces inherited `NODE_OPTIONS`
+and covers this action only; it cannot protect runner bootstrap. Other actions,
+containers, and platforms need their own patched stores. Keep TLS verification
+enabled. Remove this workaround once the runner's effective Node store is verified fixed.
 
 ### Specifying a version
 
